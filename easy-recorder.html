@@ -1,0 +1,2090 @@
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Easy Recorder</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .icon-btn { @apply grid size-10 place-items-center rounded-full text-zinc-400 transition outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 aria-pressed:bg-white aria-pressed:text-zinc-900 disabled:pointer-events-none disabled:opacity-30; }
+    .icon-btn svg { @apply size-[18px]; }
+    .sep { @apply mx-1 h-6 w-px bg-white/10; }
+    .pill { @apply inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-white/60; }
+    .label { @apply mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500; }
+    .seg { @apply flex rounded-full bg-white/5 p-0.5; }
+    .seg > button { @apply flex-1 rounded-full px-3 py-1 text-xs text-zinc-400 transition outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 aria-pressed:bg-white aria-pressed:text-zinc-900; }
+    .select { @apply h-8 w-full appearance-none rounded-lg bg-white/5 px-2.5 text-xs text-zinc-200 outline-none focus-visible:ring-2 focus-visible:ring-white/60; }
+    .swatch { @apply size-6 rounded-full ring-offset-2 ring-offset-zinc-900 outline-none aria-pressed:ring-2 aria-pressed:ring-white focus-visible:ring-2 focus-visible:ring-white/60; }
+    [popover] { @apply m-0 border-0 bg-transparent p-0 text-zinc-100; }
+  </style>
+  <style>
+    /* Transições sutis da interface */
+    @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } }
+    @keyframes pop { from { opacity: 0; transform: scale(1.35); } }
+    #dock > :not([hidden]),
+    #settings section:not([hidden]),
+    #settings section > div:not([hidden]),
+    #hl-panel:not([hidden]),
+    #empty:not([hidden]),
+    #result:not([hidden]),
+    #banner:not([hidden]),
+    #toasts > * { animation: fade-in .22s cubic-bezier(.2,.8,.2,1); }
+    #countdown:not([hidden]) { animation: fade-in .2s ease-out; }
+    #countdown-num.pop { animation: pop .45s cubic-bezier(.2,.8,.2,1); }
+    #dock { transition: width .25s ease; }
+    #settings {
+      opacity: 0; transform: translateY(8px) scale(.98);
+      transition: opacity .18s ease, transform .18s ease, overlay .18s allow-discrete, display .18s allow-discrete;
+    }
+    #settings:popover-open { opacity: 1; transform: none; }
+    @starting-style { #settings:popover-open { opacity: 0; transform: translateY(8px) scale(.98); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body class="h-full bg-zinc-950 font-sans text-zinc-100 antialiased">
+  <!-- Marca discreta -->
+  <div class="fixed left-6 top-5 flex items-center gap-2 text-sm font-medium tracking-tight text-zinc-400 select-none">
+    <span class="size-2 rounded-full bg-rose-500"></span> Easy Recorder
+  </div>
+
+  <div class="flex min-h-full flex-col items-center justify-center gap-6 px-6 py-10">
+
+    <!-- Aviso (sem suporte, contexto inseguro etc.) -->
+    <p id="banner" hidden class="w-full max-w-5xl rounded-xl bg-amber-400/10 px-4 py-2.5 text-center text-sm text-amber-200"></p>
+
+    <!-- Preview -->
+    <div class="relative aspect-video w-full max-w-5xl overflow-hidden rounded-2xl bg-zinc-900 ring-1 ring-white/5 transition-[aspect-ratio] duration-300">
+      <canvas id="preview" width="1920" height="1080" class="block h-full w-full object-contain"></canvas>
+
+      <div id="empty" class="absolute inset-0 grid place-items-center">
+        <button id="btn-share" class="pill bg-white/10 text-zinc-200 hover:bg-white/15">
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          Compartilhar tela
+        </button>
+      </div>
+
+      <video id="result" hidden controls playsinline class="absolute inset-0 h-full w-full bg-black"></video>
+
+      <div id="countdown" hidden class="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-sm">
+        <span id="countdown-num" class="text-8xl font-light tabular-nums">3</span>
+      </div>
+    </div>
+
+    <!-- Dock de controles -->
+    <div id="dock" class="flex items-center gap-1 rounded-full bg-zinc-900 p-1.5 ring-1 ring-white/10 shadow-2xl shadow-black/50">
+
+      <!-- Layouts -->
+      <div id="layouts" role="group" aria-label="Layout" class="flex items-center gap-0.5">
+        <button class="icon-btn" data-layout="screen" aria-pressed="false" title="Só tela" aria-label="Só tela">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="bubble" aria-pressed="true" title="Tela + câmera" aria-label="Tela e câmera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="16" cy="14" r="2.5" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="cam" aria-pressed="false" title="Só câmera" aria-label="Só câmera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="9" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="split" aria-pressed="false" title="Lado a lado" aria-label="Lado a lado">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="11" height="14" rx="2"/><rect x="16" y="5" width="5" height="14" rx="1.5"/></svg>
+        </button>
+      </div>
+
+      <!-- Compartilhar / parar de compartilhar durante a gravação -->
+      <button id="btn-screen" hidden class="icon-btn text-zinc-200" title="Parar de compartilhar" aria-label="Parar de compartilhar a tela">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path id="screen-slash" class="hidden" d="M4 3l16 18"/></svg>
+      </button>
+
+      <span id="sep-layouts" class="sep"></span>
+
+      <!-- Microfone com medidor de nível -->
+      <button id="btn-mic" class="icon-btn text-zinc-200" title="Microfone" aria-label="Desligar microfone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path id="mic-slash" class="hidden" d="M4 4l16 16"/></svg>
+      </button>
+      <div class="h-6 w-1.5 overflow-hidden rounded-full bg-white/10" role="meter" aria-label="Nível do microfone" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Nível do microfone">
+        <div class="flex h-full flex-col justify-end"><div id="meter" class="h-[0%] w-full rounded-full bg-emerald-400 transition-[height] duration-75"></div></div>
+      </div>
+
+      <span id="sep-settings" class="sep"></span>
+
+      <!-- Configurações -->
+      <button id="btn-settings" class="icon-btn" popovertarget="settings" title="Ajustes" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+
+      <!-- Gravar / Pausar / Parar -->
+      <span id="timer" hidden class="px-2 font-mono text-sm tabular-nums text-zinc-300">00:00</span>
+      <button id="btn-pause" hidden class="icon-btn" title="Pausar" aria-label="Pausar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      </button>
+      <button id="btn-resume" hidden class="icon-btn" title="Retomar" aria-label="Retomar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>
+      </button>
+      <button id="btn-cancel" hidden class="pill text-zinc-300 hover:bg-white/10">Cancelar</button>
+      <button id="btn-record" class="pill ml-1 bg-rose-500 text-white hover:bg-rose-400">
+        <span class="size-2.5 rounded-full bg-white"></span> Gravar
+      </button>
+      <button id="btn-stop" hidden class="pill ml-1 bg-rose-500 text-white hover:bg-rose-400">
+        <span class="size-2.5 rounded-[3px] bg-white"></span> Parar
+      </button>
+      <!-- Saídas: cada uma com preview (▶) e download (↓) -->
+      <div id="outputs" hidden class="flex flex-wrap items-center gap-1.5"></div>
+      <button id="btn-new" hidden class="pill text-zinc-300 hover:bg-white/10">Nova gravação</button>
+    </div>
+
+    <!-- Highlights (tela final) -->
+    <div id="hl-panel" hidden class="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-2xl bg-zinc-900 px-3 py-2 text-xs text-zinc-400 ring-1 ring-white/10">
+      <span class="flex items-center gap-1.5 font-medium text-zinc-200">
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12h2l2-6 4 12 3-9 2 3h5"/></svg> Highlights
+      </span>
+      <div role="group" aria-label="Formato dos highlights" class="seg">
+        <button data-hl-format="desktop" aria-pressed="true">Desktop</button>
+        <button data-hl-format="mobile" aria-pressed="false">Celular</button>
+      </div>
+      <span class="flex items-center gap-1.5">
+        <input id="hl-pre" type="number" min="1" max="10" step="1" value="3" aria-label="Segundos antes do pico" class="h-7 w-9 rounded-md bg-white/5 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none text-xs text-zinc-100 tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-white/60"> s antes
+        <input id="hl-post" type="number" min="1" max="10" step="1" value="4" aria-label="Segundos depois do pico" class="h-7 w-9 rounded-md bg-white/5 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none text-xs text-zinc-100 tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-white/60"> s depois
+      </span>
+      <div role="group" aria-label="Sensibilidade dos picos" class="seg">
+        <button data-hl-sens="low" aria-pressed="false">Baixa</button>
+        <button data-hl-sens="medium" aria-pressed="true">Média</button>
+        <button data-hl-sens="high" aria-pressed="false">Alta</button>
+      </div>
+      <button id="btn-highlights" class="pill !h-8 !px-4 bg-white text-zinc-900 hover:bg-zinc-200 disabled:opacity-70">
+        <span id="hl-label" class="tabular-nums">Gerar</span>
+      </button>
+    </div>
+
+    <p class="flex items-center gap-1.5 text-xs text-zinc-600">
+      <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Nada sai do seu navegador
+    </p>
+  </div>
+
+  <!-- Ajustes (recolhidos) -->
+  <div id="settings" popover class="w-72">
+    <div class="flex flex-col gap-5 rounded-2xl bg-zinc-900 p-4 ring-1 ring-white/10 shadow-2xl shadow-black/60">
+
+      <section id="cam-opts" class="flex flex-col gap-2">
+        <p class="label !mb-0">Câmera</p>
+        <div id="bubble-opts" class="flex flex-col gap-2">
+        <div class="flex items-center gap-2">
+          <div id="corners" role="group" aria-label="Canto" class="seg">
+            <button data-corner="tl" aria-pressed="false" aria-label="Superior esquerdo">↖</button>
+            <button data-corner="tr" aria-pressed="false" aria-label="Superior direito">↗</button>
+            <button data-corner="bl" aria-pressed="false" aria-label="Inferior esquerdo">↙</button>
+            <button data-corner="br" aria-pressed="true" aria-label="Inferior direito">↘</button>
+          </div>
+          <div id="sizes" role="group" aria-label="Tamanho" class="seg flex-1">
+            <button data-size="sm" aria-pressed="false">P</button>
+            <button data-size="md" aria-pressed="true">M</button>
+            <button data-size="lg" aria-pressed="false">G</button>
+          </div>
+        </div>
+        <div id="shapes" role="group" aria-label="Formato" class="seg">
+          <button data-shape="circle" aria-pressed="true">Redondo</button>
+          <button data-shape="square" aria-pressed="false">Quadrado</button>
+        </div>
+        </div>
+        <div id="split-opts" class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between text-xs text-zinc-400">
+            <span>Proporção</span><span id="split-label" class="tabular-nums">Tela 70% · Câmera 30%</span>
+          </div>
+          <input id="split-ratio" type="range" min="50" max="80" step="1" value="70" aria-label="Proporção entre tela e câmera" class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow">
+        </div>
+        <div id="borders" role="group" aria-label="Borda" class="seg">
+          <button data-border="none" aria-pressed="false">Sem borda</button>
+          <button data-border="thin" aria-pressed="true">Fina</button>
+          <button data-border="thick" aria-pressed="false">Grossa</button>
+        </div>
+        <label class="mt-1 flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Zoom suave em loop
+          <input id="cam-zoom" type="checkbox" class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+        <div id="zoom-opts" hidden class="flex flex-col gap-2">
+          <div class="flex items-center gap-3">
+            <input id="zoom-amount" type="range" min="5" max="30" step="1" value="15" aria-label="Intensidade do zoom" class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow">
+            <span id="zoom-label" class="w-8 text-right text-xs tabular-nums text-zinc-400">15%</span>
+          </div>
+          <div role="group" aria-label="Velocidade do zoom" class="seg">
+            <button data-zoom-speed="slow" aria-pressed="false">Lento</button>
+            <button data-zoom-speed="normal" aria-pressed="true">Normal</button>
+            <button data-zoom-speed="fast" aria-pressed="false">Rápido</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">Fundo</p>
+        <div id="bg-swatches" role="group" aria-label="Fundo" class="flex items-center gap-2">
+          <button data-bg="none" aria-pressed="false" class="swatch grid place-items-center bg-zinc-800 text-zinc-500" title="Sem fundo" aria-label="Sem fundo">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 19 19 5"/></svg>
+          </button>
+          <button data-color="#6d5dfc" aria-pressed="true" class="swatch bg-[#6d5dfc]" aria-label="Violeta"></button>
+          <button data-color="#0ea5e9" aria-pressed="false" class="swatch bg-[#0ea5e9]" aria-label="Azul"></button>
+          <button data-color="#10b981" aria-pressed="false" class="swatch bg-[#10b981]" aria-label="Verde"></button>
+          <button data-color="#f43f5e" aria-pressed="false" class="swatch bg-[#f43f5e]" aria-label="Rosa"></button>
+          <label class="swatch relative grid cursor-pointer place-items-center bg-[conic-gradient(red,yellow,lime,cyan,blue,magenta,red)]" title="Outra cor">
+            <input id="bg-color" type="color" value="#6d5dfc" class="absolute inset-0 cursor-pointer opacity-0" aria-label="Outra cor">
+          </label>
+          <label class="swatch relative ml-auto grid cursor-pointer place-items-center bg-zinc-800 text-zinc-400 hover:text-white" title="Imagem ou vídeo">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <input id="bg-file" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm" class="sr-only" aria-label="Imagem ou vídeo de fundo">
+          </label>
+        </div>
+        <p id="bg-file-name" hidden class="mt-2 truncate text-xs text-zinc-500"></p>
+      </section>
+
+      <section class="flex flex-col gap-2">
+        <p class="label">Dispositivos</p>
+        <button id="btn-reshare" class="flex h-8 items-center justify-between rounded-lg bg-white/5 px-2.5 text-xs text-zinc-200 hover:bg-white/10"><span id="screen-status">Tela não compartilhada</span><span class="text-zinc-500">Trocar</span></button>
+        <select id="cam-select" class="select" aria-label="Câmera"><option>Câmera padrão</option></select>
+        <select id="mic-select" class="select" aria-label="Microfone"><option>Microfone padrão</option></select>
+        <label class="mt-1 flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Áudio da aba
+          <input id="tab-audio" type="checkbox" class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+        <label class="flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Gerar versão para celular (9:16)
+          <input id="vertical" type="checkbox" checked class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+      </section>
+    </div>
+  </div>
+
+  <div id="toasts" aria-live="polite" class="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col gap-2"></div>
+
+  <!-- Fontes de vídeo ocultas usadas pelo canvas -->
+  <div id="hidden-sources" class="pointer-events-none fixed left-0 top-0 size-px overflow-hidden opacity-0" aria-hidden="true">
+    <video id="v-screen" muted playsinline></video>
+    <video id="v-cam" muted playsinline></video>
+  </div>
+
+  <script>
+const mod_state = (() => {
+// Estado único do app + máquina de estados (spec, seção 7).
+const listeners = new Set();
+
+const state = {
+  status: 'configurando',
+  layout: 'bubble',
+  bubbleCorner: 'br',
+  bubbleSize: 'md',
+  camShape: 'circle',
+  camBorder: 'thin',
+  splitRatio: 0.7,
+  camZoom: false,
+  zoomAmount: 0.15,
+  zoomSpeed: 'normal',
+  bgMode: 'color',
+  bgColor: '#6d5dfc',
+  bgFileName: '',
+  tabAudio: false,
+  micOn: true,
+  camId: '',
+  micId: '',
+  cams: [],
+  mics: [],
+  hasScreen: false,
+  hasCam: false,
+  blobUrl: null,
+  fileName: '',
+  vertical: true,
+  blobUrlV: null,
+  fileNameV: '',
+  hlPre: 3, // segundos antes de cada pico
+  hlPost: 4, // segundos depois
+  hlSens: 'medium',
+  hlFormat: 'desktop', // desktop | mobile // sensibilidade: low | medium | high
+  hlStatus: 'idle', // idle | working | ready | none
+  hlProgress: 0,
+  hl: { desktop: null, mobile: null }, // { url, name } de cada highlight gerado
+  preview: 'main', // main | vertical | hl-desktop | hl-mobile
+};
+
+const transitions = {
+  configurando: ['contagem'],
+  contagem: ['gravando', 'configurando'],
+  gravando: ['pausado', 'finalizado'],
+  pausado: ['gravando', 'finalizado'],
+  finalizado: ['configurando'],
+};
+
+function setStatus(next) {
+  if (!transitions[state.status].includes(next)) return false;
+  state.status = next;
+  emit();
+  return true;
+}
+
+function update(patch) {
+  Object.assign(state, patch);
+  emit();
+}
+
+function subscribe(fn) {
+  listeners.add(fn);
+  fn(state);
+  return () => listeners.delete(fn);
+}
+
+function emit() {
+  for (const fn of listeners) fn(state);
+}
+
+return { state, setStatus, update, subscribe };
+})();
+
+const mod_media = (() => {
+// Acesso a tela, câmera, microfone e mixagem de áudio.
+const md = navigator.mediaDevices;
+
+const support = {
+  secure: window.isSecureContext,
+  display: !!md?.getDisplayMedia,
+  user: !!md?.getUserMedia,
+  recorder: typeof MediaRecorder !== 'undefined',
+};
+
+class MediaAccessError extends Error {
+  constructor(kind, cause) {
+    super(kind);
+    this.kind = kind; // 'cancelled' | 'denied' | 'notfound' | 'unknown'
+    this.cause = cause;
+  }
+}
+
+function classify(err) {
+  if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') return 'denied';
+  if (err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError') return 'notfound';
+  return 'unknown';
+}
+
+async function getScreen({ audio }) {
+  try {
+    return await md.getDisplayMedia({
+      video: { frameRate: 30, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      audio: audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false,
+      ...(audio ? { systemAudio: 'include' } : {}),
+    });
+  } catch (e) {
+    // Fechar o seletor também chega como NotAllowedError.
+    throw new MediaAccessError(e?.name === 'NotAllowedError' ? 'cancelled' : classify(e), e);
+  }
+}
+
+async function getCamera(deviceId) {
+  try {
+    return await md.getUserMedia({
+      video: {
+        ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+      },
+      audio: false,
+    });
+  } catch (e) {
+    throw new MediaAccessError(classify(e), e);
+  }
+}
+
+async function getMic(deviceId) {
+  try {
+    return await md.getUserMedia({
+      audio: {
+        ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
+        echoCancellation: true,
+        noiseSuppression: true,
+        // Sem ganho automático: ele achata o volume e esconde os picos de voz.
+        autoGainControl: false,
+      },
+      video: false,
+    });
+  } catch (e) {
+    throw new MediaAccessError(classify(e), e);
+  }
+}
+
+// Câmera e microfone num único pedido: o navegador pergunta uma vez só.
+async function getCamAndMic({ camId, micId, cam = true, mic = true }) {
+  try {
+    return await md.getUserMedia({
+      video: cam
+        ? { ...(camId ? { deviceId: { ideal: camId } } : {}), width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }
+        : false,
+      audio: mic ? { ...(micId ? { deviceId: { ideal: micId } } : {}), echoCancellation: true, noiseSuppression: true, autoGainControl: false } : false,
+    });
+  } catch (e) {
+    throw new MediaAccessError(classify(e), e);
+  }
+}
+
+async function listDevices() {
+  if (!md?.enumerateDevices) return { cams: [], mics: [] };
+  const all = await md.enumerateDevices();
+  const pick = (kind, name) =>
+    all
+      .filter((d) => d.kind === kind && d.deviceId)
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `${name} ${i + 1}` }));
+  return { cams: pick('videoinput', 'Câmera'), mics: pick('audioinput', 'Microfone') };
+}
+
+async function permissionState(name) {
+  try {
+    return (await navigator.permissions.query({ name })).state;
+  } catch {
+    return 'prompt';
+  }
+}
+
+function stopStream(stream) {
+  stream?.getTracks().forEach((t) => t.stop());
+}
+
+let audioCtx = null;
+function audioContext() {
+  if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+
+// Junta várias fontes de áudio numa única trilha (MediaRecorder lida mal com várias).
+// Junta várias fontes de áudio numa única trilha (MediaRecorder lida mal com várias).
+// A trilha existe mesmo sem fontes, para dar para somar o áudio de uma tela compartilhada no meio da gravação.
+function mixAudio(streams) {
+  const ctx = audioContext();
+  const dest = ctx.createMediaStreamDestination();
+  const nodes = [];
+  const add = (s) => {
+    if (!s?.getAudioTracks().length) return;
+    const src = ctx.createMediaStreamSource(new MediaStream(s.getAudioTracks()));
+    src.connect(dest);
+    nodes.push(src);
+  };
+  streams.forEach(add);
+  return {
+    track: dest.stream.getAudioTracks()[0],
+    add,
+    close: () => nodes.forEach((n) => n.disconnect()),
+  };
+}
+
+// Medidor de nível (RF04c): devolve um valor 0..1 a cada leitura.
+function createLevelMeter(stream) {
+  const ctx = audioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  return {
+    read() {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      const rms = Math.sqrt(sum / buf.length);
+      // dBFS de -60..0 vira 0..1
+      const db = 20 * Math.log10(rms || 1e-8);
+      return Math.min(1, Math.max(0, (db + 60) / 60));
+    },
+    close: () => src.disconnect(),
+  };
+}
+
+return { support, MediaAccessError, getScreen, getCamera, getMic, getCamAndMic, listDevices, permissionState, stopStream, audioContext, mixAudio, createLevelMeter };
+})();
+
+const mod_layouts = (() => {
+// Funções puras que calculam onde tela e câmera ficam em cada layout (spec, seção 4).
+// Tudo é medido a partir da área útil e centralizado; os tamanhos escalam com a altura do vídeo.
+const LAYOUTS = {
+  screen: { label: 'Só tela', screen: true, cam: false },
+  bubble: { label: 'Tela + câmera', screen: true, cam: true },
+  cam: { label: 'Só câmera', screen: false, cam: true },
+  split: { label: 'Lado a lado', screen: true, cam: true },
+};
+
+const BUBBLE = { sm: 0.22, md: 0.3, lg: 0.4 }; // diâmetro como fração da altura da tela
+
+// Maior retângulo com a proporção `aspect` que cabe em `r`, centralizado.
+function fit(aspect, r) {
+  const w = Math.min(r.w, r.h * aspect);
+  const h = w / aspect;
+  return { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
+}
+
+const round = (r) => ({ ...r, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+
+function computeLayout(
+  id,
+  { width: W, height: H, framed, corner = 'br', size = 'md', shape = 'circle', screenAspect = 16 / 9, splitRatio = 0.7 },
+) {
+  const u = H / 720; // unidade: 1 px em 720p
+  const pad = framed ? 48 * u : 0;
+  const radius = framed ? 16 * u : 0;
+  const area = { x: pad, y: pad, w: W - 2 * pad, h: H - 2 * pad };
+
+  switch (id) {
+    case 'screen':
+      return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
+
+    case 'cam':
+      return { screen: null, cam: round({ ...area, radius, shape: 'rect' }) };
+
+    case 'bubble': {
+      // A bolha se alinha aos cantos da própria tela, não do vídeo.
+      const sc = fit(screenAspect, area);
+      const d = Math.round(sc.h * BUBBLE[size]);
+      const m = Math.round(sc.h * 0.04);
+      const x = corner.includes('l') ? sc.x + m : sc.x + sc.w - m - d;
+      const y = corner.includes('t') ? sc.y + m : sc.y + sc.h - m - d;
+      const cam =
+        shape === 'square'
+          ? { x, y, w: d, h: d, radius: Math.round(d * 0.18), shape: 'rect' }
+          : { x, y, w: d, h: d, radius: d / 2, shape: 'circle' };
+      return { screen: round({ ...sc, radius }), cam: round(cam) };
+    }
+
+    case 'split': {
+      // Tela e câmera com a mesma altura, separadas por um espaço fixo, o conjunto centralizado.
+      const gap = 24 * u;
+      // Sem fundo, ainda deixa uma margem igual ao espaço entre os cards.
+      const a = framed ? area : { x: gap, y: gap, w: W - 2 * gap, h: H - 2 * gap };
+      // splitRatio = fração da largura dos cards que fica com a tela (0,5 a 0,8).
+      const ratio = Math.min(0.8, Math.max(0.5, splitRatio));
+      const h = Math.min(a.h, ((a.w - gap) * ratio) / screenAspect);
+      const sw = h * screenAspect;
+      const cw = (sw * (1 - ratio)) / ratio;
+      const x0 = a.x + (a.w - (sw + gap + cw)) / 2;
+      const y0 = a.y + (a.h - h) / 2;
+      const r = Math.max(radius, 12 * u); // cantos arredondados sempre, para os dois cards combinarem
+      return {
+        screen: round({ x: x0, y: y0, w: sw, h, radius: r }),
+        cam: round({ x: x0 + sw + gap, y: y0, w: cw, h, radius: r, shape: 'rect' }),
+      };
+    }
+
+    default:
+      throw new Error(`Layout desconhecido: ${id}`);
+  }
+}
+
+// Versão vertical (9:16) para celular: empilha tela em cima e câmera embaixo, tudo centralizado.
+function computeVerticalLayout(id, { width: W, height: H, shape = 'circle', screenAspect = 16 / 9 }) {
+  const pad = W * 0.06;
+  const gap = W * 0.04;
+  const radius = W * 0.03;
+  const area = { x: pad, y: pad, w: W - 2 * pad, h: H - 2 * pad };
+  const screenH = area.w / screenAspect;
+  const camMax = H * 0.4; // a câmera nunca passa de 40% da altura do quadro
+
+  switch (id) {
+    case 'screen':
+      return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
+
+    case 'cam': {
+      const h = Math.min(area.h, camMax);
+      return { screen: null, cam: round({ x: area.x, y: area.y + (area.h - h) / 2, w: area.w, h, radius, shape: 'rect' }) };
+    }
+
+    case 'bubble': {
+      // Bolha grande, centralizada abaixo da tela.
+      const d = Math.min(area.w * 0.62, area.h - screenH - gap, camMax);
+      const total = screenH + gap + d;
+      const y0 = area.y + (area.h - total) / 2;
+      const cx = area.x + (area.w - d) / 2;
+      const cam =
+        shape === 'square'
+          ? { x: cx, y: y0 + screenH + gap, w: d, h: d, radius: d * 0.18, shape: 'rect' }
+          : { x: cx, y: y0 + screenH + gap, w: d, h: d, radius: d / 2, shape: 'circle' };
+      return { screen: round({ x: area.x, y: y0, w: area.w, h: screenH, radius }), cam: round(cam) };
+    }
+
+    case 'split': {
+      // Câmera ocupa a largura toda embaixo da tela.
+      const camH = Math.min(area.w * 1.1, area.h - screenH - gap, camMax);
+      const total = screenH + gap + camH;
+      const y0 = area.y + (area.h - total) / 2;
+      return {
+        screen: round({ x: area.x, y: y0, w: area.w, h: screenH, radius }),
+        cam: round({ x: area.x, y: y0 + screenH + gap, w: area.w, h: camH, radius, shape: 'rect' }),
+      };
+    }
+
+    default:
+      throw new Error(`Layout desconhecido: ${id}`);
+  }
+}
+
+return { LAYOUTS, computeLayout, computeVerticalLayout };
+})();
+
+const mod_compositor = (() => {
+// Desenha fundo, tela e câmera num canvas. O mesmo canvas é o preview e a fonte da gravação.
+const { computeLayout } = mod_layouts;
+
+const unitOf = (canvas) => Math.min(canvas.width, canvas.height) / 720;
+
+function fitContain(sw, sh, r) {
+  const s = Math.min(r.w / sw, r.h / sh);
+  const w = sw * s;
+  const h = sh * s;
+  return { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
+}
+
+function coverSource(sw, sh, dw, dh) {
+  const s = Math.max(dw / sw, dh / sh);
+  const w = dw / s;
+  const h = dh / s;
+  return { sx: (sw - w) / 2, sy: (sh - h) / 2, sw: w, sh: h };
+}
+
+const isReady = (v) => v && v.readyState >= 2 && v.videoWidth > 0;
+
+function roundedPath(ctx, r, radius) {
+  const rad = Math.max(0, Math.min(radius, r.w / 2, r.h / 2));
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(r.x, r.y, r.w, r.h, rad);
+  else ctx.rect(r.x, r.y, r.w, r.h);
+}
+
+// Transições: cada propriedade anda em direção ao alvo com suavização exponencial.
+// TAU de 70 ms faz a mudança assentar em ~300 ms e aceita mudar de alvo no meio do caminho.
+const TAU = 70;
+const BG_FADE_MS = 350;
+const KEYS = ['x', 'y', 'w', 'h', 'radius', 'a'];
+
+function step(cur, target, k) {
+  if (!cur && !target) return null;
+  // Elemento que aparece: nasce no lugar final, 96% do tamanho e transparente.
+  if (!cur) cur = { ...target, ...shrink(target, 0.96), a: 0 };
+  const goal = target ? { ...target, a: 1 } : { ...cur, ...shrink(cur, 0.96), a: 0 };
+  const next = { ...goal };
+  for (const key of KEYS) next[key] = cur[key] + (goal[key] - cur[key]) * k;
+  if (!target && next.a < 0.02) return null;
+  return next;
+}
+
+function shrink(r, s) {
+  const w = r.w * s;
+  const h = r.h * s;
+  return { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
+}
+
+const BORDER = { none: 0, thin: 4, thick: 12 };
+const ZOOM_PERIOD = { slow: 12000, normal: 8000, fast: 4500 }; // ms por ciclo
+
+class Compositor {
+  constructor(canvas, getScene, { layoutFn = computeLayout } = {}) {
+    this.canvas = canvas;
+    this.layoutFn = layoutFn;
+    this.ctx = canvas.getContext('2d');
+    this.getScene = getScene;
+    this.cur = { screen: null, cam: null, border: BORDER.thin, zoom: 0 };
+    this.bgLayer = document.createElement('canvas');
+    this.bgPrev = document.createElement('canvas');
+    this.bgKey = null;
+    this.bgFadeStart = 0;
+    this.last = 0;
+    this.size = '';
+  }
+
+  // Timer num Worker: continua batendo a ~30 fps mesmo com a aba em segundo plano.
+  start() {
+    const code = 'setInterval(() => postMessage(0), 1000 / 30);';
+    try {
+      this.worker = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+      this.worker.onmessage = () => this.draw();
+    } catch {
+      // Aberto como arquivo (file://) o Worker pode ser bloqueado: usa timer comum.
+      this.timer = setInterval(() => this.draw(), 1000 / 30);
+    }
+    this.draw();
+  }
+
+  stop() {
+    this.worker?.terminate();
+    clearInterval(this.timer);
+  }
+
+  draw() {
+    const { ctx } = this;
+    const { width: W, height: H } = this.canvas;
+    const s = this.getScene();
+    const framed = s.background.active;
+    const v = s.screenVideo;
+    const screenAspect = isReady(v) ? v.videoWidth / v.videoHeight : 16 / 9;
+    const L = this.layoutFn(s.layout, {
+      width: W, height: H, framed, corner: s.corner, size: s.size, shape: s.shape, screenAspect, splitRatio: s.splitRatio,
+    });
+
+    // Tempo desde o último quadro → fator de suavização.
+    const now = performance.now();
+    const dt = this.last ? Math.min(100, now - this.last) : 1000;
+    this.last = now;
+    let k = 1 - Math.exp(-dt / TAU);
+
+    // Mudou a resolução do canvas: sem animação, encaixa direto.
+    const size = `${W}x${H}`;
+    if (size !== this.size) {
+      this.size = size;
+      this.cur = { ...this.cur, screen: null, cam: null };
+      for (const c of [this.bgLayer, this.bgPrev]) Object.assign(c, { width: W, height: H });
+      k = 1;
+    }
+
+    this.drawBackground(s.background, W, H, now);
+
+    const screenTarget = L.screen && { ...L.screen, shadow: framed || s.layout === 'split' };
+    this.cur.screen = step(this.cur.screen, screenTarget, k);
+    this.cur.cam = step(this.cur.cam, L.cam, k);
+    this.cur.border += ((BORDER[s.border] ?? BORDER.thin) - this.cur.border) * k;
+    this.cur.zoom += ((s.camZoom ? 1 : 0) - this.cur.zoom) * (1 - Math.exp(-dt / 250)); // liga/desliga devagar
+
+    if (this.cur.screen) this.drawScreen(s.screenVideo, this.cur.screen);
+    if (this.cur.cam) this.drawCam(s.camVideo, this.cur.cam, this.cur.border, this.zoomScale(Math.min(dt, 100), s.zoomAmount ?? 0.15, ZOOM_PERIOD[s.zoomSpeed] ?? 8000));
+  }
+
+  // Fundo em camada própria para poder fazer fade entre o anterior e o novo.
+  drawBackground(bg, W, H, now) {
+    const key = `${bg.mode}|${bg.color}|${bg.url}`;
+    if (this.bgKey !== null && key !== this.bgKey) {
+      const p = this.bgPrev.getContext('2d');
+      p.clearRect(0, 0, W, H);
+      p.drawImage(this.bgLayer, 0, 0);
+      this.bgFadeStart = now;
+    }
+    this.bgKey = key;
+
+    const b = this.bgLayer.getContext('2d');
+    b.fillStyle = '#09090b';
+    b.fillRect(0, 0, W, H);
+    bg.draw(b, W, H);
+
+    const { ctx } = this;
+    ctx.drawImage(this.bgLayer, 0, 0);
+    const t = (now - this.bgFadeStart) / BG_FADE_MS;
+    if (t < 1) {
+      ctx.save();
+      ctx.globalAlpha = 1 - (1 - (1 - t) ** 3); // ease-out
+      ctx.drawImage(this.bgPrev, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  drawScreen(v, r) {
+    const { ctx } = this;
+    const u = unitOf(this.canvas);
+    ctx.save();
+    ctx.globalAlpha = r.a;
+    if (r.shadow) {
+      ctx.shadowColor = 'rgba(0,0,0,.35)';
+      ctx.shadowBlur = 40 * u;
+      ctx.shadowOffsetY = 12 * u;
+    }
+    roundedPath(ctx, r, r.radius);
+    ctx.fillStyle = '#18181b';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+    if (isReady(v)) ctx.drawImage(v, r.x, r.y, r.w, r.h);
+    // Sem tela: só o card vazio. O botão "Compartilhar tela" fica por cima no preview.
+    ctx.restore();
+  }
+
+  // Zoom em loop ("respiração"): vai e volta com curva senoidal.
+  // A fase acumula, então mudar a velocidade não dá salto.
+  zoomScale(dt, amount, period) {
+    this.zoomPhase = ((this.zoomPhase || 0) + dt / period) % 1;
+    this.cur.zoomAmount = (this.cur.zoomAmount ?? amount) + (amount - (this.cur.zoomAmount ?? amount)) * (1 - Math.exp(-dt / 150));
+    const wave = 0.5 - 0.5 * Math.cos(2 * Math.PI * this.zoomPhase);
+    return 1 + this.cur.zoomAmount * wave * this.cur.zoom;
+  }
+
+  // Redondo e quadrado usam o mesmo caminho (raio = metade do lado vira círculo),
+  // então a troca de formato também é animada.
+  drawCam(v, r, borderPx, zoom = 1) {
+    const { ctx } = this;
+    const u = unitOf(this.canvas);
+    ctx.save();
+    ctx.globalAlpha = r.a;
+    ctx.shadowColor = 'rgba(0,0,0,.4)';
+    ctx.shadowBlur = 30 * u;
+    ctx.shadowOffsetY = 8 * u;
+    roundedPath(ctx, r, r.radius);
+    ctx.fillStyle = '#27272a';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+    if (isReady(v)) {
+      const c = coverSource(v.videoWidth, v.videoHeight, r.w, r.h);
+      // O zoom recorta um pedaço menor do centro: o card não muda de tamanho.
+      const sw = c.sw / zoom;
+      const sh = c.sh / zoom;
+      ctx.drawImage(v, c.sx + (c.sw - sw) / 2, c.sy + (c.sh - sh) / 2, sw, sh, r.x, r.y, r.w, r.h);
+    } else {
+      this.label('Câmera desligada', r);
+    }
+    ctx.restore();
+
+    const lw = borderPx * u;
+    if (lw > 0.3) {
+      const half = lw / 2;
+      ctx.save();
+      ctx.globalAlpha = r.a;
+      roundedPath(ctx, { x: r.x + half, y: r.y + half, w: r.w - lw, h: r.h - lw }, Math.max(0, r.radius - half));
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = 'rgba(255,255,255,.92)';
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  label(text, r) {
+    const { ctx } = this;
+    ctx.fillStyle = '#71717a';
+    ctx.font = `500 ${Math.round(Math.max(14, Math.min(22, r.w / 16)) * unitOf(this.canvas))}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, r.x + r.w / 2, r.y + r.h / 2);
+  }
+}
+
+return { fitContain, coverSource, Compositor };
+})();
+
+const mod_background = (() => {
+// Fundo atrás dos cards: nenhum, cor ou arquivo (imagem/vídeo). Spec, seção 4.1.
+const { coverSource } = mod_compositor;
+
+class Background {
+  mode = 'color';
+  color = '#6d5dfc';
+  el = null;
+  url = null;
+
+  get active() {
+    return this.mode === 'color' || (this.mode === 'file' && !!this.el);
+  }
+
+  async setFile(file) {
+    const isImage = /^image\/(png|jpeg|webp)$/.test(file.type);
+    const isVideo = /^video\/(mp4|webm)$/.test(file.type);
+    if (!isImage && !isVideo) throw new Error('Use uma imagem JPG, PNG ou WebP, ou um vídeo MP4 ou WebM.');
+    const url = URL.createObjectURL(file);
+    try {
+      const el = isImage ? await loadImage(url) : await loadVideo(url);
+      this.release();
+      this.el = el;
+      this.url = url;
+    } catch {
+      URL.revokeObjectURL(url);
+      throw new Error('Não foi possível abrir esse arquivo.');
+    }
+  }
+
+  release() {
+    if (this.el instanceof HTMLVideoElement) {
+      this.el.pause();
+      this.el.remove();
+    }
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.el = null;
+    this.url = null;
+  }
+
+  draw(ctx, W, H) {
+    if (this.mode === 'color') {
+      ctx.fillStyle = this.color;
+      ctx.fillRect(0, 0, W, H);
+    } else if (this.mode === 'file' && this.el) {
+      // Sempre "cover": escala para cobrir o quadro inteiro e corta o excesso pelo centro.
+      const sw = this.el.naturalWidth || this.el.videoWidth;
+      const sh = this.el.naturalHeight || this.el.videoHeight;
+      if (!sw || !sh) return;
+      const c = coverSource(sw, sh, W, H);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(this.el, c.sx, c.sy, c.sw, c.sh, 0, 0, W, H);
+    }
+  }
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function loadVideo(url) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video');
+    Object.assign(v, { muted: true, loop: true, playsInline: true, src: url });
+    v.onloadeddata = () => v.play().then(() => resolve(v), () => resolve(v));
+    v.onerror = reject;
+    // No DOM para o navegador não pausar o vídeo fora da tela.
+    document.getElementById('hidden-sources').append(v);
+  });
+}
+
+return { Background };
+})();
+
+const mod_recorder = (() => {
+// Gravação via MediaRecorder, com pausa e cronômetro que ignora o tempo pausado.
+// Sempre MP4 (H.264 + AAC). Perfil High nível 5.1 cobre até 4K; os seguintes são reservas.
+const TYPES = [
+  'video/mp4;codecs=avc1.640033,mp4a.40.2',
+  'video/mp4;codecs=avc1.640028,mp4a.40.2',
+  'video/mp4;codecs=avc1.4d0028,mp4a.40.2',
+  'video/mp4;codecs=avc1.42E01F,mp4a.40.2',
+  'video/mp4',
+];
+
+function pickMimeType() {
+  if (typeof MediaRecorder === 'undefined') return '';
+  return TYPES.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+const supportsMp4 = () => !!pickMimeType();
+
+class Recorder {
+  constructor(stream, { width = 1920, height = 1080 } = {}) {
+    this.stream = stream;
+    this.mimeType = pickMimeType();
+    this.mr = new MediaRecorder(stream, {
+      mimeType: this.mimeType,
+      videoBitsPerSecond: bitrateFor(width, height),
+      audioBitsPerSecond: 192_000,
+    });
+    this.chunks = [];
+    this.mr.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
+    this.acc = 0;
+    this.since = null;
+  }
+
+  get container() {
+    return 'video/mp4';
+  }
+
+  get extension() {
+    return 'mp4';
+  }
+
+  start() {
+    this.mr.start(1000);
+    this.since = performance.now();
+  }
+
+  pause() {
+    if (this.mr.state !== 'recording') return;
+    this.mr.pause();
+    this.acc += performance.now() - this.since;
+    this.since = null;
+  }
+
+  resume() {
+    if (this.mr.state !== 'paused') return;
+    this.mr.resume();
+    this.since = performance.now();
+  }
+
+  get elapsed() {
+    return this.acc + (this.since ? performance.now() - this.since : 0);
+  }
+
+  stop() {
+    if (this.since) {
+      this.acc += performance.now() - this.since;
+      this.since = null;
+    }
+    return new Promise((resolve) => {
+      const done = () => resolve(new Blob(this.chunks, { type: this.container }));
+      if (this.mr.state === 'inactive') return done();
+      this.mr.onstop = done;
+      this.mr.stop();
+    });
+  }
+}
+
+// ~0,2 bit por pixel por quadro a 30 fps, entre 8 e 50 Mbps.
+function bitrateFor(w, h, fps = 30) {
+  return Math.round(Math.min(50e6, Math.max(8e6, w * h * fps * 0.2)));
+}
+
+const pad = (n) => String(n).padStart(2, '0');
+
+function fileName(ext = 'mp4', d = new Date()) {
+  return `easy-recorder-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${ext}`;
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+}
+
+return { pickMimeType, supportsMp4, Recorder, bitrateFor, fileName, formatTime };
+})();
+
+const mod_highlights = (() => {
+// Vídeo de highlights escolhidos só pela intensidade da voz (microfone).
+// 1) Durante a gravação, o app anota o nível do microfone ~10 vezes por segundo.
+// 2) No fim, acha os picos bem acima do normal e monta trechos em volta deles.
+// 3) Toca o vídeo final escondido, só nesses trechos, e grava um MP4 novo. Tudo local.
+const { audioContext } = mod_media;
+const { Recorder } = mod_recorder;
+
+// Timer em Worker: segue batendo mesmo com a aba em segundo plano.
+function ticker(fps, fn) {
+  const code = `setInterval(() => postMessage(0), ${1000 / fps});`;
+  try {
+    const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+    w.onmessage = fn;
+    return () => w.terminate();
+  } catch {
+    const id = setInterval(fn, 1000 / fps);
+    return () => clearInterval(id);
+  }
+}
+
+/**
+ * samples: [{ t: ms no vídeo, v: nível 0..1 }]
+ * Retorna trechos [{ start, end }] em ms, em ordem cronológica.
+ *
+ * A fala alterna voz e silêncio entre palavras, então a referência ("seu tom normal")
+ * é calculada só sobre os momentos com voz. Picos são momentos bem acima desse normal;
+ * a sensibilidade controla o quanto acima. Se nada passar do limiar mas houver voz,
+ * usa os momentos mais altos da gravação, para não voltar vazio.
+ */
+const SENS = { low: 1.6, medium: 1.0, high: 0.6 };
+
+function findHighlights(
+  samples,
+  { pre = 3000, post = 4000, maxTotal = 30000, minGap = 1000, sensitivity = 'medium' } = {},
+) {
+  if (samples.length < 20) return [];
+
+  // Suavização curta (~0,5 s) para um estalo isolado não contar como pico.
+  const W = 2;
+  const sm = samples.map((s, i) => {
+    let a = 0;
+    let n = 0;
+    for (let j = Math.max(0, i - W); j <= Math.min(samples.length - 1, i + W); j++) {
+      a += samples[j].v;
+      n++;
+    }
+    return { t: s.t, v: a / n };
+  });
+
+  const quant = (arr, p) => arr[Math.min(arr.length - 1, Math.floor(p * arr.length))];
+  const all = sm.map((s) => s.v).sort((a, b) => a - b);
+  const floor = quant(all, 0.2); // ruído de fundo / silêncio
+  const voiced = all.filter((v) => v > floor + 0.08);
+  if (voiced.length < 10) return []; // praticamente sem voz
+
+  const normal = quant(voiced, 0.5);
+  const spread = Math.max(0.03, quant(voiced, 0.8) - quant(voiced, 0.2));
+  const thr = normal + Math.max(0.04, (SENS[sensitivity] ?? 1) * spread);
+
+  // Regiões acima do limiar, guardando o ponto mais alto de cada uma.
+  let peaks = [];
+  let cur = null;
+  for (const s of sm) {
+    if (s.v >= thr) {
+      if (!cur) cur = { peakT: s.t, peakV: s.v };
+      if (s.v > cur.peakV) Object.assign(cur, { peakT: s.t, peakV: s.v });
+    } else if (cur) {
+      peaks.push(cur);
+      cur = null;
+    }
+  }
+  if (cur) peaks.push(cur);
+
+  // Reserva: nenhum pico claro, mas teve voz → os 3 momentos mais altos, bem separados.
+  if (!peaks.length) {
+    const byLoud = [...sm].sort((a, b) => b.v - a.v);
+    for (const s of byLoud) {
+      if (s.v <= normal) break;
+      if (peaks.every((p) => Math.abs(p.peakT - s.t) > pre + post)) peaks.push({ peakT: s.t, peakV: s.v });
+      if (peaks.length === 3) break;
+    }
+  }
+
+  const duration = samples[samples.length - 1].t;
+  const clips = peaks
+    .map((p) => ({ start: Math.max(0, p.peakT - pre), end: Math.min(duration, p.peakT + post), score: p.peakV - normal }))
+    .sort((a, b) => a.start - b.start);
+
+  // Junta trechos que se encostam.
+  const merged = [];
+  for (const c of clips) {
+    const last = merged[merged.length - 1];
+    if (last && c.start <= last.end + minGap) {
+      last.end = Math.max(last.end, c.end);
+      last.score = Math.max(last.score, c.score);
+    } else merged.push({ ...c });
+  }
+
+  // Fica com os mais fortes até o limite de duração, depois volta à ordem do vídeo.
+  const picked = [];
+  let total = 0;
+  for (const c of [...merged].sort((a, b) => b.score - a.score)) {
+    const d = c.end - c.start;
+    if (total + d > maxTotal && picked.length) continue;
+    picked.push(c);
+    total += d;
+  }
+  return picked.sort((a, b) => a.start - b.start).map(({ start, end }) => ({ start, end }));
+}
+
+const once = (el, ev) => new Promise((resolve) => el.addEventListener(ev, resolve, { once: true }));
+
+/** Monta o MP4 de highlights a partir do vídeo final. onProgress recebe 0..1. */
+async function renderHighlights(blob, clips, onProgress = () => {}) {
+  const url = URL.createObjectURL(blob);
+  const v = document.createElement('video');
+  Object.assign(v, { src: url, playsInline: true, preload: 'auto' });
+  document.getElementById('hidden-sources').append(v);
+  await once(v, 'loadedmetadata');
+
+  // MP4 gravado no navegador às vezes não informa a duração: força o cálculo.
+  if (!Number.isFinite(v.duration)) {
+    v.currentTime = 1e9;
+    await once(v, 'seeked');
+  }
+
+  const W = v.videoWidth;
+  const H = v.videoHeight;
+  const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = canvas.getContext('2d');
+
+  // Áudio do vídeo vai para a gravação, não para as caixas de som.
+  const actx = audioContext();
+  const src = actx.createMediaElementSource(v);
+  const dest = actx.createMediaStreamDestination();
+  src.connect(dest);
+
+  const out = canvas.captureStream(30);
+  out.addTrack(dest.stream.getAudioTracks()[0]);
+  const rec = new Recorder(out, { width: W, height: H });
+
+  const FADE = 250; // ms de fade em cada ponta do trecho
+  let clip = null;
+  let waiter = null;
+  const draw = () => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    if (clip) {
+      const t = v.currentTime * 1000;
+      ctx.globalAlpha = Math.max(0, Math.min(1, (t - clip.start) / FADE, (clip.end - t) / FADE));
+      ctx.drawImage(v, 0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+    waiter?.();
+  };
+  const stopTick = ticker(30, draw);
+
+  const total = clips.reduce((a, c) => a + (c.end - c.start), 0);
+  let done = 0;
+  try {
+    for (const [i, c] of clips.entries()) {
+      v.currentTime = c.start / 1000;
+      await once(v, 'seeked');
+      clip = c;
+      draw();
+      if (i === 0) rec.start();
+      else rec.resume();
+      await v.play();
+      await new Promise((resolve) => {
+        waiter = () => {
+          const t = v.currentTime * 1000;
+          onProgress(Math.min(1, (done + Math.max(0, t - c.start)) / total));
+          if (t >= c.end || v.ended) {
+            waiter = null;
+            resolve();
+          }
+        };
+      });
+      v.pause();
+      rec.pause();
+      done += c.end - c.start;
+    }
+    return await rec.stop();
+  } finally {
+    stopTick();
+    src.disconnect();
+    out.getTracks().forEach((t) => t.stop());
+    v.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
+return { ticker, findHighlights, renderHighlights };
+})();
+
+const mod_settings = (() => {
+// Salva as preferências no próprio navegador: localStorage para as opções,
+// IndexedDB para a imagem/vídeo de fundo. Nada sai da máquina.
+const KEY = 'gravador:ajustes:v1';
+const SAVED = [
+  'layout', 'bubbleCorner', 'bubbleSize', 'camShape', 'camBorder', 'splitRatio',
+  'camZoom', 'zoomAmount', 'zoomSpeed', 'bgMode', 'bgColor', 'bgFileName',
+  'tabAudio', 'micOn', 'camId', 'micId', 'vertical', 'hlPre', 'hlPost', 'hlSens', 'hlFormat',
+];
+
+function loadSettings() {
+  try {
+    const data = JSON.parse(localStorage.getItem(KEY) || '{}');
+    return Object.fromEntries(SAVED.filter((k) => k in data).map((k) => [k, data[k]]));
+  } catch {
+    return {};
+  }
+}
+
+let timer = null;
+let lastJson = '';
+function saveSettings(state) {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    const json = JSON.stringify(Object.fromEntries(SAVED.map((k) => [k, state[k]])));
+    if (json === lastJson) return;
+    lastJson = json;
+    try {
+      localStorage.setItem(KEY, json);
+    } catch {
+      /* armazenamento cheio ou bloqueado: segue sem salvar */
+    }
+  }, 300);
+}
+
+// ---------- Arquivo de fundo (IndexedDB) ----------
+function db() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('gravador', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('arquivos');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function tx(mode, fn) {
+  const d = await Promise.race([db(), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))]);
+  return new Promise((resolve, reject) => {
+    const t = d.transaction('arquivos', mode);
+    const req = fn(t.objectStore('arquivos'));
+    t.oncomplete = () => resolve(req?.result);
+    t.onerror = () => reject(t.error);
+  });
+}
+
+async function saveBackgroundFile(file) {
+  try {
+    await tx('readwrite', (s) => s.put(file, 'fundo'));
+  } catch {
+    /* sem IndexedDB: o fundo só não volta na próxima vez */
+  }
+}
+
+async function loadBackgroundFile() {
+  try {
+    const blob = await tx('readonly', (s) => s.get('fundo'));
+    return blob instanceof Blob ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
+return { loadSettings, saveSettings, saveBackgroundFile, loadBackgroundFile };
+})();
+
+const mod_ui = (() => {
+// Tudo que mexe no DOM: renderização por estado, avisos, medidor, contagem.
+const { LAYOUTS } = mod_layouts;
+
+const $ = (id) => document.getElementById(id);
+const show = (el, on) => (el.hidden = !on);
+const press = (el, on) => el.setAttribute('aria-pressed', String(on));
+
+function render(s) {
+  const st = s.status;
+  const setup = st === 'configurando';
+  const live = st === 'gravando' || st === 'pausado';
+  const layout = LAYOUTS[s.layout];
+
+  // Dock
+  // Layouts ficam disponíveis também durante a gravação; ajustes só antes de gravar.
+  for (const id of ['layouts', 'sep-layouts']) show($(id), setup || live);
+  for (const id of ['sep-settings', 'btn-settings']) show($(id), setup);
+  show($('btn-screen'), live);
+  $('btn-screen').setAttribute('aria-label', s.hasScreen ? 'Parar de compartilhar a tela' : 'Compartilhar a tela');
+  $('btn-screen').title = s.hasScreen ? 'Parar de compartilhar' : 'Compartilhar tela';
+  $('screen-slash').classList.toggle('hidden', s.hasScreen);
+  $('btn-screen').classList.toggle('text-rose-400', !s.hasScreen);
+  show($('btn-record'), setup);
+  show($('btn-cancel'), st === 'contagem');
+  show($('timer'), live || st === 'finalizado');
+  show($('btn-pause'), st === 'gravando');
+  show($('btn-resume'), st === 'pausado');
+  show($('btn-stop'), live);
+  show($('btn-new'), st === 'finalizado');
+  show($('outputs'), st === 'finalizado');
+  if (st === 'finalizado') renderOutputs(s);
+  const fin = st === 'finalizado';
+  show($('hl-panel'), fin);
+  const hasV = !!s.blobUrlV;
+  document.querySelectorAll('[data-hl-format]').forEach((b) => {
+    const isMobile = b.dataset.hlFormat === 'mobile';
+    b.disabled = s.hlStatus === 'working' || (isMobile && !hasV);
+    b.title = isMobile && !hasV ? 'Ligue "Gerar versão para celular" nos ajustes antes de gravar' : '';
+    press(b, b.dataset.hlFormat === (isMobile || hasV ? s.hlFormat : 'desktop') && !(isMobile && !hasV));
+  });
+  if (!hasV) press(document.querySelector('[data-hl-format=desktop]'), true);
+  for (const b of document.querySelectorAll('[data-hl-sens], #hl-pre, #hl-post')) b.disabled = s.hlStatus === 'working';
+  $('btn-highlights').disabled = s.hlStatus === 'working';
+  $('hl-label').textContent =
+    s.hlStatus === 'working' ? `Gerando ${Math.round(s.hlProgress * 100)}%` : 'Gerar';
+  $('timer').classList.toggle('text-amber-300', st === 'pausado');
+
+  document.querySelectorAll('[data-layout]').forEach((b) => {
+    press(b, b.dataset.layout === s.layout);
+    // Gravando sem tela compartilhada, layouts com tela ficam indisponíveis.
+    if (!b.dataset.unsupported) b.disabled = live && LAYOUTS[b.dataset.layout].screen && !s.hasScreen;
+  });
+
+  // Microfone
+  $('btn-mic').classList.toggle('text-rose-400', !s.micOn);
+  $('btn-mic').setAttribute('aria-label', s.micOn ? 'Desligar microfone' : 'Ligar microfone');
+  $('mic-slash').classList.toggle('hidden', s.micOn);
+  if (st === 'finalizado') show($('btn-mic').parentElement.querySelector('[role=meter]'), false);
+  else show($('btn-mic').parentElement.querySelector('[role=meter]'), true);
+  show($('btn-mic'), st !== 'finalizado');
+
+  // Preview / resultado
+  show($('empty'), setup && layout.screen && !s.hasScreen);
+  show($('result'), st === 'finalizado');
+  const current = st === 'finalizado' ? outputsOf(s).find((o) => o.key === s.preview) || outputsOf(s)[0] : null;
+  if (current && $('result').src !== current.url) $('result').src = current.url;
+  if (st !== 'finalizado' && $('result').getAttribute('src')) {
+    $('result').removeAttribute('src');
+    $('result').load();
+  }
+
+  // Ajustes
+  show($('cam-opts'), layout.cam);
+  show($('bubble-opts'), s.layout === 'bubble');
+  show($('split-opts'), s.layout === 'split');
+  const pct = Math.round(s.splitRatio * 100);
+  if (Number($('split-ratio').value) !== pct) $('split-ratio').value = String(pct);
+  $('split-label').textContent = `Tela ${pct}% · Câmera ${100 - pct}%`;
+  document.querySelectorAll('[data-shape]').forEach((b) => press(b, b.dataset.shape === s.camShape));
+  document.querySelectorAll('[data-border]').forEach((b) => press(b, b.dataset.border === s.camBorder));
+  document.querySelectorAll('[data-corner]').forEach((b) => press(b, b.dataset.corner === s.bubbleCorner));
+  document.querySelectorAll('[data-size]').forEach((b) => press(b, b.dataset.size === s.bubbleSize));
+  press(document.querySelector('[data-bg=none]'), s.bgMode === 'none');
+  document.querySelectorAll('[data-color]').forEach((b) =>
+    press(b, s.bgMode === 'color' && b.dataset.color.toLowerCase() === s.bgColor.toLowerCase()),
+  );
+  show($('bg-file-name'), s.bgMode === 'file' && !!s.bgFileName);
+  $('bg-file-name').textContent = s.bgFileName;
+  $('screen-status').textContent = s.hasScreen ? 'Tela compartilhada' : 'Tela não compartilhada';
+  show($('btn-reshare'), layout.screen);
+  show($('cam-select'), layout.cam);
+  $('mic-select').disabled = !s.micOn;
+  fillSelect($('cam-select'), s.cams, s.camId, 'Câmera padrão');
+  fillSelect($('mic-select'), s.mics, s.micId, 'Microfone padrão');
+  $('tab-audio').checked = s.tabAudio;
+  $('cam-zoom').checked = s.camZoom;
+  $('vertical').checked = s.vertical;
+  document.querySelectorAll('[data-hl-sens]').forEach((b) => press(b, b.dataset.hlSens === s.hlSens));
+  if (document.activeElement !== $('hl-pre')) $('hl-pre').value = String(s.hlPre);
+  if (document.activeElement !== $('hl-post')) $('hl-post').value = String(s.hlPost);
+  show($('zoom-opts'), s.camZoom);
+  const zpct = Math.round(s.zoomAmount * 100);
+  if (Number($('zoom-amount').value) !== zpct) $('zoom-amount').value = String(zpct);
+  $('zoom-label').textContent = `${zpct}%`;
+  document.querySelectorAll('[data-zoom-speed]').forEach((b) => press(b, b.dataset.zoomSpeed === s.zoomSpeed));
+
+  if (!setup && $('settings').matches(':popover-open')) $('settings').hidePopover();
+}
+
+// Lista de saídas do fim da gravação.
+function outputsOf(s) {
+  return [
+    s.blobUrl && { key: 'main', label: 'Desktop', url: s.blobUrl, name: s.fileName },
+    s.blobUrlV && { key: 'vertical', label: 'Celular', url: s.blobUrlV, name: s.fileNameV },
+    s.hl.desktop && { key: 'hl-desktop', label: 'Highlights', url: s.hl.desktop.url, name: s.hl.desktop.name },
+    s.hl.mobile && { key: 'hl-mobile', label: 'Highlights celular', url: s.hl.mobile.url, name: s.hl.mobile.name },
+  ].filter(Boolean);
+}
+
+const PLAY = '<svg class="size-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5v14l12-7z"/></svg>';
+const DOWN = '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg>';
+
+function renderOutputs(s) {
+  const list = outputsOf(s);
+  const active = list.some((o) => o.key === s.preview) ? s.preview : list[0]?.key;
+  const key = JSON.stringify([list.map((o) => o.url), active]);
+  const box = $('outputs');
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.replaceChildren(
+    ...list.map((o) => {
+      const on = o.key === active;
+      const el = document.createElement('div');
+      el.className = `flex h-10 items-center rounded-full transition ${on ? 'bg-white text-zinc-900' : 'bg-white/10 text-zinc-100'}`;
+      el.innerHTML = `
+        <button data-preview="${o.key}" aria-pressed="${on}" title="Ver no player" class="flex h-full items-center gap-1.5 rounded-l-full pl-3.5 pr-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-white/60">${PLAY}${o.label}</button>
+        <span class="h-5 w-px ${on ? 'bg-zinc-900/15' : 'bg-white/10'}"></span>
+        <a data-download href="${o.url}" download="${o.name}" title="Baixar ${o.label}" aria-label="Baixar ${o.label}" class="grid h-full place-items-center rounded-r-full pl-2 pr-3 outline-none ${on ? 'hover:bg-zinc-900/5' : 'hover:bg-white/10'} focus-visible:ring-2 focus-visible:ring-white/60">${DOWN}</a>`;
+      return el;
+    }),
+  );
+}
+
+function fillSelect(sel, items, value, fallback) {
+  const key = JSON.stringify([items, value]);
+  if (sel.dataset.key === key) return;
+  sel.dataset.key = key;
+  sel.replaceChildren(
+    ...(items.length ? items : [{ id: '', label: fallback }]).map((d) => new Option(d.label, d.id, false, d.id === value)),
+  );
+}
+
+function setTimer(text) {
+  $('timer').textContent = text;
+}
+
+let meterLevel = 0;
+function setMeter(level) {
+  // Sobe rápido, desce devagar: leitura mais agradável.
+  meterLevel = level > meterLevel ? level : meterLevel * 0.85;
+  const pct = Math.round(meterLevel * 100);
+  $('meter').style.height = `${pct}%`;
+  $('meter').classList.toggle('bg-amber-400', pct > 90);
+  $('meter').classList.toggle('bg-emerald-400', pct <= 90);
+  $('meter').parentElement.parentElement.setAttribute('aria-valuenow', String(pct));
+}
+
+function showCountdown(n) {
+  show($('countdown'), n != null);
+  if (n != null) {
+    const el = $('countdown-num');
+    el.textContent = String(n);
+    el.classList.remove('pop');
+    void el.offsetWidth; // reinicia a animação a cada número
+    el.classList.add('pop');
+  }
+}
+
+function banner(text) {
+  show($('banner'), !!text);
+  $('banner').textContent = text || '';
+}
+
+function toast(message, { action, timeout = 6000 } = {}) {
+  const el = document.createElement('div');
+  el.className = 'flex items-center gap-4 rounded-full bg-zinc-800 px-4 py-2.5 text-sm text-zinc-100 shadow-xl ring-1 ring-white/10';
+  el.append(Object.assign(document.createElement('span'), { textContent: message }));
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'font-medium text-rose-300 hover:text-rose-200';
+    b.textContent = action.label;
+    b.onclick = () => {
+      action.onClick();
+      el.remove();
+    };
+    el.append(b);
+  }
+  $('toasts').append(el);
+  setTimeout(() => el.remove(), timeout);
+}
+
+// Abre o menu de ajustes logo acima do dock, alinhado à direita.
+function positionSettings() {
+  const p = $('settings');
+  const d = $('dock').getBoundingClientRect();
+  p.style.inset = 'auto';
+  p.style.position = 'fixed';
+  p.style.left = `${Math.max(12, d.right - p.offsetWidth)}px`;
+  p.style.top = `${Math.max(12, d.top - p.offsetHeight - 12)}px`;
+}
+
+return { $, render, setTimer, setMeter, showCountdown, banner, toast, positionSettings };
+})();
+
+(() => {
+// Liga estado, mídia, compositor e gravador à interface.
+const { state, update, setStatus, subscribe } = mod_state;
+const media = mod_media;
+const { LAYOUTS, computeVerticalLayout } = mod_layouts;
+const { Compositor } = mod_compositor;
+const { Background } = mod_background;
+const { Recorder, fileName, formatTime, supportsMp4 } = mod_recorder;
+const ui = mod_ui;
+const { findHighlights, renderHighlights, ticker } = mod_highlights;
+const { loadSettings, saveSettings, saveBackgroundFile, loadBackgroundFile } = mod_settings;
+
+const { $ } = ui;
+const canvas = $('preview');
+const vScreen = $('v-screen');
+const vCam = $('v-cam');
+const background = new Background();
+
+const streams = { screen: null, cam: null, mic: null };
+let meter = null;
+let recorder = null;
+let recorderV = null; // versão vertical para celular
+let levelSamples = []; // nível do microfone ao longo da gravação (highlights)
+let stopSampler = null;
+let lastBlob = null;
+let lastBlobV = null; // versão celular, se gravada
+let compositorV = null;
+let audioMix = null;
+let timerId = null;
+let cancelCountdown = null;
+let downloaded = false;
+
+const sceneFor = () => ({
+  layout: state.layout,
+  corner: state.bubbleCorner,
+  size: state.bubbleSize,
+  shape: state.camShape,
+  border: state.camBorder,
+  splitRatio: state.splitRatio,
+  camZoom: state.camZoom,
+  zoomAmount: state.zoomAmount,
+  zoomSpeed: state.zoomSpeed,
+  screenVideo: vScreen,
+  camVideo: vCam,
+  background,
+});
+const compositor = new Compositor(canvas, sceneFor);
+
+// Canvas 9:16 (1080×1920) desenhado em paralelo só durante a gravação.
+const canvasV = Object.assign(document.createElement('canvas'), { width: 1080, height: 1920 });
+
+// ---------- Resolução (RNF04: sempre a máxima) ----------
+const MAX_W = 3840;
+const MAX_H = 2160;
+
+function fitCanvasToSource() {
+  if (recorder) return; // não muda de tamanho no meio da gravação
+  const v = LAYOUTS[state.layout].screen ? vScreen : vCam;
+  let w = v.videoWidth || 1920;
+  let h = v.videoHeight || 1080;
+  const scale = Math.min(1, MAX_W / w, MAX_H / h);
+  w = Math.round((w * scale) / 2) * 2;
+  h = Math.round((h * scale) / 2) * 2;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  // O quadro do preview segue a proporção do vídeo, sem faixas nas laterais.
+  canvas.parentElement.style.aspectRatio = `${w} / ${h}`;
+}
+for (const v of [vScreen, vCam]) {
+  v.addEventListener('loadedmetadata', fitCanvasToSource);
+  v.addEventListener('resize', fitCanvasToSource);
+}
+
+// ---------- Fontes ----------
+function attach(video, stream) {
+  video.srcObject = stream;
+  if (stream) video.play().catch(() => {});
+}
+
+async function shareScreen() {
+  let s;
+  try {
+    s = await media.getScreen({ audio: state.tabAudio });
+  } catch (e) {
+    if (e.kind !== 'cancelled') ui.toast('Não foi possível compartilhar a tela.');
+    return false;
+  }
+  media.stopStream(streams.screen);
+  streams.screen = s;
+  attach(vScreen, s);
+  s.getVideoTracks()[0].addEventListener('ended', () => onScreenEnded(s));
+  update({ hasScreen: true });
+  fitCanvasToSource();
+  if (recorder) {
+    audioMix?.add(s); // áudio da aba, se houver, entra na mesma trilha
+    if (screenReturnLayout) selectLayout(screenReturnLayout); // volta ao layout de antes
+    screenReturnLayout = null;
+  }
+  return true;
+}
+
+// Parar o compartilhamento pelo app (track.stop() não dispara 'ended').
+function stopSharing() {
+  const s = streams.screen;
+  media.stopStream(s);
+  onScreenEnded(s);
+}
+
+let screenReturnLayout = null;
+
+function onScreenEnded(s) {
+  if (!s || streams.screen !== s) return;
+  if (state.status === 'contagem') cancelCountdown?.();
+  streams.screen = null;
+  attach(vScreen, null);
+  update({ hasScreen: false });
+  // Gravando: a gravação continua e o layout desliza para "Só câmera".
+  if (recorder && LAYOUTS[state.layout].screen) {
+    screenReturnLayout = state.layout;
+    selectLayout('cam');
+  }
+}
+
+async function enableCamera() {
+  let s;
+  try {
+    s = await media.getCamera(state.camId);
+  } catch (e) {
+    const why = {
+      denied: 'A câmera foi bloqueada. Libere no ícone ao lado do endereço e recarregue.',
+      notfound: 'Nenhuma câmera encontrada.',
+    }[e.kind] || 'Não conseguimos acessar a câmera. Feche outros apps que estejam usando ela.';
+    ui.toast(why, {
+      action: { label: 'Usar só tela', onClick: () => selectLayout('screen') },
+    });
+    return false;
+  }
+  media.stopStream(streams.cam);
+  streams.cam = s;
+  attach(vCam, s);
+  update({ hasCam: true });
+  refreshDevices();
+  return true;
+}
+
+function disableCamera() {
+  media.stopStream(streams.cam);
+  streams.cam = null;
+  attach(vCam, null);
+  update({ hasCam: false });
+}
+
+async function enableMic({ quiet = false } = {}) {
+  let s;
+  try {
+    s = await media.getMic(state.micId);
+  } catch {
+    if (!quiet) ui.toast('Microfone indisponível. A gravação seguirá sem ele.');
+    update({ micOn: false });
+    return false;
+  }
+  disableMic();
+  streams.mic = s;
+  meter = media.createLevelMeter(s);
+  refreshDevices();
+  return true;
+}
+
+// Pede câmera e microfone juntos (um único aviso de permissão).
+async function acquireCamAndMic() {
+  const cam = LAYOUTS[state.layout].cam && !streams.cam;
+  const mic = state.micOn && !streams.mic;
+  if (!cam && !mic) return;
+  let s;
+  try {
+    s = await media.getCamAndMic({ camId: state.camId, micId: state.micId, cam, mic });
+  } catch {
+    // Se o pedido conjunto falhar, tenta cada um para mostrar o motivo certo.
+    if (cam) await enableCamera();
+    if (mic) await enableMic();
+    return;
+  }
+  if (cam) {
+    streams.cam = new MediaStream(s.getVideoTracks());
+    attach(vCam, streams.cam);
+    update({ hasCam: true });
+  }
+  if (mic) {
+    streams.mic = new MediaStream(s.getAudioTracks());
+    meter = media.createLevelMeter(streams.mic);
+  }
+  refreshDevices();
+  fitCanvasToSource();
+}
+
+function disableMic() {
+  meter?.close();
+  meter = null;
+  media.stopStream(streams.mic);
+  streams.mic = null;
+}
+
+function releaseAll() {
+  media.stopStream(streams.screen);
+  streams.screen = null;
+  attach(vScreen, null);
+  disableCamera();
+  disableMic();
+  update({ hasScreen: false });
+}
+
+async function refreshDevices() {
+  const { cams, mics } = await media.listDevices();
+  const camId = streams.cam?.getVideoTracks()[0]?.getSettings().deviceId || state.camId;
+  const micId = streams.mic?.getAudioTracks()[0]?.getSettings().deviceId || state.micId;
+  update({ cams, mics, camId, micId });
+}
+
+// Medidor de nível (RF04c)
+(function meterLoop() {
+  const level = meter && state.micOn && state.status !== 'pausado' ? meter.read() : 0;
+  ui.setMeter(level);
+  requestAnimationFrame(meterLoop);
+})();
+
+// ---------- Layout ----------
+function selectLayout(id) {
+  const live = state.status === 'gravando' || state.status === 'pausado';
+  if (state.status !== 'configurando' && !live) return;
+  if (live && LAYOUTS[id].screen && !streams.screen) return; // não dá para abrir o seletor de tela gravando
+  update({ layout: id });
+  const L = LAYOUTS[id];
+  // A câmera continua ligada ao trocar de layout, para não pedir permissão de novo.
+  if (L.cam && !streams.cam) enableCamera();
+  fitCanvasToSource();
+}
+
+// ---------- Gravação ----------
+async function onRecord() {
+  const L = LAYOUTS[state.layout];
+  // Tela primeiro: getDisplayMedia precisa do clique "fresco".
+  if (L.screen && !streams.screen && !(await shareScreen())) return;
+  if (L.cam && !streams.cam && !(await enableCamera())) return;
+  if (state.micOn && !streams.mic) await enableMic();
+  fitCanvasToSource();
+
+  setStatus('contagem');
+  if (!(await countdown())) return;
+  startRecording();
+}
+
+function countdown() {
+  return new Promise((resolve) => {
+    let n = 3;
+    ui.showCountdown(n);
+    const id = setInterval(() => {
+      n -= 1;
+      if (n > 0) return ui.showCountdown(n);
+      clearInterval(id);
+      ui.showCountdown(null);
+      cancelCountdown = null;
+      resolve(true);
+    }, 1000);
+    cancelCountdown = () => {
+      clearInterval(id);
+      ui.showCountdown(null);
+      cancelCountdown = null;
+      setStatus('configurando');
+      resolve(false);
+    };
+  });
+}
+
+function startRecording() {
+  const L = LAYOUTS[state.layout];
+  const out = canvas.captureStream(30);
+  // A câmera continua ligada durante a gravação para poder voltar a um layout com câmera.
+  audioMix = media.mixAudio([streams.mic, streams.screen]);
+  out.addTrack(audioMix.track);
+
+  recorder = new Recorder(out, { width: canvas.width, height: canvas.height });
+
+  if (state.vertical) {
+    compositorV = new Compositor(canvasV, sceneFor, { layoutFn: computeVerticalLayout });
+    compositorV.start();
+    const outV = canvasV.captureStream(30);
+    outV.addTrack(audioMix.track.clone());
+    recorderV = new Recorder(outV, { width: canvasV.width, height: canvasV.height });
+    recorderV.start();
+  }
+  recorder.start();
+  levelSamples = [];
+  stopSampler = ticker(10, () => {
+    if (!recorder || state.status !== 'gravando') return;
+    levelSamples.push({ t: recorder.elapsed, v: meter && state.micOn ? meter.read() : 0 });
+  });
+  downloaded = false;
+  setStatus('gravando');
+  ui.setTimer('00:00');
+  timerId = setInterval(() => ui.setTimer(formatTime(recorder.elapsed)), 250);
+}
+
+function pause() {
+  recorder?.pause();
+  recorderV?.pause();
+  setStatus('pausado');
+}
+
+function resume() {
+  recorder?.resume();
+  recorderV?.resume();
+  setStatus('gravando');
+}
+
+async function stopRecording() {
+  if (!recorder) return;
+  const r = recorder;
+  clearInterval(timerId);
+  const rv = recorderV;
+  recorderV = null;
+  stopSampler?.();
+  stopSampler = null;
+  const [blob, blobV] = await Promise.all([r.stop(), rv ? rv.stop() : null]);
+  recorder = null;
+  compositorV?.stop();
+  compositorV = null;
+  ui.setTimer(formatTime(r.elapsed));
+  r.stream.getTracks().forEach((t) => t.stop());
+  rv?.stream.getTracks().forEach((t) => t.stop());
+  audioMix?.close();
+  audioMix = null;
+  screenReturnLayout = null;
+  releaseAll(); // RNF05: luz da câmera apaga
+  const name = fileName(r.extension);
+  lastBlob = blob;
+  lastBlobV = blobV;
+  update({
+    blobUrl: URL.createObjectURL(blob),
+    fileName: name,
+    blobUrlV: blobV ? URL.createObjectURL(blobV) : null,
+    fileNameV: blobV ? name.replace('.mp4', '-celular.mp4') : '',
+  });
+  setStatus('finalizado');
+}
+
+function newRecording() {
+  if (!downloaded && !confirm('O vídeo ainda não foi baixado. Descartar mesmo assim?')) return;
+  if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
+  if (state.blobUrlV) URL.revokeObjectURL(state.blobUrlV);
+  revokeHighlights();
+  lastBlob = null;
+  lastBlobV = null;
+  update({ blobUrl: null, fileName: '', blobUrlV: null, fileNameV: '', hlStatus: 'idle', hlProgress: 0, preview: 'main' });
+  ui.setTimer('00:00');
+  setStatus('configurando');
+  acquireCamAndMic();
+  fitCanvasToSource();
+}
+
+// ---------- Highlights (RF19) ----------
+async function makeHighlights() {
+  if (!lastBlob || state.hlStatus === 'working') return;
+  const mobile = state.hlFormat === 'mobile' && lastBlobV;
+  const source = mobile ? lastBlobV : lastBlob;
+  const clips = findHighlights(levelSamples, { pre: state.hlPre * 1000, post: state.hlPost * 1000, sensitivity: state.hlSens });
+  if (!clips.length) {
+    update({ hlStatus: 'none' });
+    ui.toast(levelSamples.length ? 'Não ouvi voz nesta gravação (microfone desligado?).' : 'Sem dados de áudio desta gravação.');
+    return;
+  }
+  ui.toast(clips.length === 1 ? '1 destaque encontrado.' : `${clips.length} destaques encontrados.`);
+  update({ hlStatus: 'working', hlProgress: 0 });
+  try {
+    const blob = await renderHighlights(source, clips, (p) => update({ hlProgress: p }));
+    const suffix = mobile ? '-celular-highlights.mp4' : '-highlights.mp4';
+    const key = mobile ? 'mobile' : 'desktop';
+    if (state.hl[key]) URL.revokeObjectURL(state.hl[key].url);
+    const hl = { ...state.hl, [key]: { url: URL.createObjectURL(blob), name: state.fileName.replace('.mp4', suffix) } };
+    update({ hlStatus: 'idle', hl, preview: `hl-${key}` }); // já mostra o resultado no player
+  } catch (e) {
+    console.error(e);
+    update({ hlStatus: 'idle' });
+    ui.toast('Não foi possível gerar os highlights.');
+  }
+}
+
+// RF14: aviso antes de fechar com vídeo não baixado (ou gravação em andamento).
+window.addEventListener('beforeunload', (e) => {
+  const unsaved = (state.status === 'finalizado' && !downloaded) || state.status === 'gravando' || state.status === 'pausado';
+  if (unsaved) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+// ---------- Eventos da interface ----------
+document.querySelectorAll('[data-layout]').forEach((b) => b.addEventListener('click', () => selectLayout(b.dataset.layout)));
+$('btn-share').addEventListener('click', shareScreen);
+$('btn-screen').addEventListener('click', () => (streams.screen ? stopSharing() : shareScreen()));
+$('btn-reshare').addEventListener('click', shareScreen);
+$('btn-record').addEventListener('click', onRecord);
+$('btn-cancel').addEventListener('click', () => cancelCountdown?.());
+$('btn-pause').addEventListener('click', pause);
+$('btn-resume').addEventListener('click', resume);
+$('btn-stop').addEventListener('click', stopRecording);
+// Saídas: ▶ mostra no player, ↓ baixa.
+$('outputs').addEventListener('click', (e) => {
+  const play = e.target.closest('[data-preview]');
+  if (play) update({ preview: play.dataset.preview });
+  if (e.target.closest('[data-download]')) downloaded = true;
+});
+$('vertical').addEventListener('change', (e) => update({ vertical: e.target.checked }));
+$('btn-new').addEventListener('click', newRecording);
+$('btn-highlights').addEventListener('click', makeHighlights);
+// Mudar qualquer opção depois de gerar volta o botão para "Gerar" (o arquivo anterior é descartado).
+// Formato só escolhe qual gerar; antes/depois/sensibilidade mudam o resultado, então descartam os gerados.
+function revokeHighlights() {
+  for (const h of Object.values(state.hl)) if (h) URL.revokeObjectURL(h.url);
+}
+function setHlOption(patch) {
+  if (state.hlStatus === 'working') return;
+  if ('hlFormat' in patch) return update(patch);
+  revokeHighlights();
+  const preview = state.preview.startsWith('hl-') ? 'main' : state.preview;
+  update({ ...patch, hlStatus: 'idle', hl: { desktop: null, mobile: null }, preview });
+}
+document.querySelectorAll('[data-hl-sens]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlSens: b.dataset.hlSens })));
+document.querySelectorAll('[data-hl-format]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlFormat: b.dataset.hlFormat })));
+for (const [id, key] of [['hl-pre', 'hlPre'], ['hl-post', 'hlPost']]) {
+  $(id).addEventListener('change', (e) => {
+    const n = Math.min(10, Math.max(1, Math.round(Number(e.target.value) || state[key])));
+    setHlOption({ [key]: n });
+  });
+}
+
+$('btn-mic').addEventListener('click', async () => {
+  const on = !state.micOn;
+  update({ micOn: on });
+  // Só silencia a trilha: desligar e ligar de novo faria o navegador pedir permissão outra vez.
+  if (streams.mic) streams.mic.getAudioTracks().forEach((t) => (t.enabled = on));
+  else if (on) await enableMic();
+});
+
+$('settings').addEventListener('toggle', (e) => e.newState === 'open' && ui.positionSettings());
+window.addEventListener('resize', () => $('settings').matches(':popover-open') && ui.positionSettings());
+
+document.querySelectorAll('[data-corner]').forEach((b) => b.addEventListener('click', () => update({ bubbleCorner: b.dataset.corner })));
+document.querySelectorAll('[data-size]').forEach((b) => b.addEventListener('click', () => update({ bubbleSize: b.dataset.size })));
+document.querySelectorAll('[data-shape]').forEach((b) => b.addEventListener('click', () => update({ camShape: b.dataset.shape })));
+$('cam-zoom').addEventListener('change', (e) => update({ camZoom: e.target.checked }));
+$('zoom-amount').addEventListener('input', (e) => update({ zoomAmount: Number(e.target.value) / 100 }));
+document.querySelectorAll('[data-zoom-speed]').forEach((b) => b.addEventListener('click', () => update({ zoomSpeed: b.dataset.zoomSpeed })));
+$('split-ratio').addEventListener('input', (e) => update({ splitRatio: Number(e.target.value) / 100 }));
+document.querySelectorAll('[data-border]').forEach((b) => b.addEventListener('click', () => update({ camBorder: b.dataset.border })));
+
+document.querySelector('[data-bg=none]').addEventListener('click', () => {
+  background.mode = 'none';
+  update({ bgMode: 'none' });
+});
+function setColor(c) {
+  background.mode = 'color';
+  background.color = c;
+  update({ bgMode: 'color', bgColor: c });
+}
+document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => setColor(b.dataset.color)));
+$('bg-color').addEventListener('input', (e) => setColor(e.target.value));
+$('bg-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    await background.setFile(file);
+    background.mode = 'file';
+    update({ bgMode: 'file', bgFileName: file.name });
+    saveBackgroundFile(file);
+  } catch (err) {
+    ui.toast(err.message); // CA14: mantém o fundo anterior
+  }
+});
+
+$('cam-select').addEventListener('change', (e) => {
+  update({ camId: e.target.value });
+  if (streams.cam) enableCamera();
+});
+$('mic-select').addEventListener('change', (e) => {
+  update({ micId: e.target.value });
+  if (streams.mic) enableMic();
+});
+$('tab-audio').addEventListener('change', (e) => {
+  update({ tabAudio: e.target.checked });
+  if (streams.screen) ui.toast('Vale a partir do próximo compartilhamento de tela.', { action: { label: 'Compartilhar de novo', onClick: shareScreen } });
+});
+
+// ---------- Preferências salvas ----------
+function restoreSettings() {
+  const saved = loadSettings();
+  // Layout salvo que este navegador não suporta (ex.: sem captura de tela) é ignorado.
+  if (saved.layout && !LAYOUTS[saved.layout]) delete saved.layout;
+  if (!media.support.display && saved.layout && LAYOUTS[saved.layout].screen) delete saved.layout;
+  Object.assign(state, saved);
+  background.color = state.bgColor;
+  background.mode = state.bgMode === 'file' ? 'none' : state.bgMode;
+  if (state.bgMode === 'file') restoreBackgroundFile(); // em paralelo: não segura a abertura do app
+}
+
+async function restoreBackgroundFile() {
+  {
+    const blob = await loadBackgroundFile();
+    if (blob) {
+      try {
+        await background.setFile(new File([blob], state.bgFileName || 'fundo', { type: blob.type }));
+        background.mode = 'file';
+      } catch {
+        background.mode = 'color';
+        update({ bgMode: 'color' });
+      }
+    } else {
+      background.mode = 'color';
+      update({ bgMode: 'color' });
+    }
+  }
+}
+
+// ---------- Início ----------
+async function init() {
+  if (!media.support.secure) {
+    ui.banner('Abra esta página por http://localhost ou HTTPS para liberar câmera e tela.');
+  }
+  if (!media.support.display) {
+    // CA11: sem captura de tela (ex.: celular)
+    document.querySelectorAll('[data-layout]').forEach((b) => (b.disabled = LAYOUTS[b.dataset.layout].screen) && (b.dataset.unsupported = '1'));
+    update({ layout: 'cam' });
+    ui.banner('Este navegador não grava a tela. Dá para usar o layout "Só câmera".');
+  }
+  if (!media.support.user) {
+    ui.banner('Este navegador bloqueou câmera e microfone nesta página. Abra no Chrome, ou por http://localhost.');
+  }
+  if (media.support.recorder && !supportsMp4()) {
+    $('btn-record').disabled = true;
+    ui.banner('Este navegador não grava em MP4. Use o Chrome, o Edge ou o Safari atualizados.');
+  }
+  if (!media.support.recorder || !media.support.user) {
+    $('btn-record').disabled = true;
+    ui.banner('Este navegador não suporta gravação. Use a versão atual do Chrome, Edge ou Firefox.');
+  }
+
+  restoreSettings();
+  subscribe(ui.render);
+  subscribe(saveSettings);
+  try {
+    compositor.start();
+  } catch (e) {
+    console.error(e);
+  }
+
+  // Já pede câmera e microfone ao abrir, para o preview mostrar a câmera de cara.
+  if (media.support.user) await acquireCamAndMic();
+  refreshDevices();
+}
+
+init();
+
+})();
+</script>
+</body>
+</html>
