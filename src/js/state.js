@@ -28,7 +28,7 @@ export const state = {
   vertical: true,
   pipOpen: false,
   autoCam: false, // true = gravando nesta aba com "Trocar sozinho": vídeo só com a câmera
-  autoSwitch: false, // câmera nesta aba, tela fora dela
+  autoSwitch: true, // câmera nesta aba, tela fora dela
   blobUrlV: null,
   fileNameV: '',
   hlPre: 3, // segundos antes de cada pico

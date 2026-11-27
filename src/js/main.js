@@ -246,22 +246,26 @@ function applyAutoSwitch() {
   clearTimeout(autoTimer);
   // Pequena espera para ignorar trocas rápidas de foco (ex.: clicar na barra do navegador).
   autoTimer = setTimeout(() => {
-    const live = state.status === 'gravando' || state.status === 'pausado';
+    const live = ['contagem', 'gravando', 'pausado'].includes(state.status);
     if (!live || !state.autoSwitch) {
       if (state.autoCam) update({ autoCam: false });
       return;
     }
     // Clicar na minibar flutuante não conta como sair da aba.
     const pipFocused = !!pipWindow()?.document.hasFocus();
-    const away = document.hidden || (!document.hasFocus() && !pipFocused);
+    const away = document.hidden || (!pageFocused && !pipFocused);
     const autoCam = !away;
     if (autoCam && !streams.cam) enableCamera();
     if (state.autoCam !== autoCam) update({ autoCam });
   }, 250);
 }
-document.addEventListener('visibilitychange', applyAutoSwitch);
-window.addEventListener('blur', applyAutoSwitch);
-window.addEventListener('focus', applyAutoSwitch);
+// Foco da página: só conta como "saiu" depois de um blur de verdade. Ao fechar o seletor de tela
+// o Chrome às vezes não devolve o foco, e aí document.hasFocus() dizia "fora" mesmo nesta aba.
+let pageFocused = true;
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pageFocused = true; applyAutoSwitch(); });
+window.addEventListener('blur', () => { pageFocused = false; applyAutoSwitch(); });
+window.addEventListener('focus', () => { pageFocused = true; applyAutoSwitch(); });
+document.addEventListener('pointerdown', () => { if (!pageFocused) { pageFocused = true; applyAutoSwitch(); } });
 
 // ---------- Minibar flutuante (RF22) ----------
 function openMiniBar() {
@@ -282,6 +286,9 @@ async function onRecord() {
   if (state.micOn && !streams.mic) await enableMic();
   fitCanvasToSource();
 
+  // "Trocar sozinho": já na contagem fica só a câmera, para o vídeo começar sem a tela.
+  pageFocused = true; // você acabou de clicar em Gravar aqui
+  if (state.autoSwitch && !document.hidden) update({ autoCam: true });
   setStatus('contagem');
   if (!(await countdown())) return closePip();
   startRecording();
@@ -305,6 +312,7 @@ function countdown() {
       ui.showCountdown(null);
       cancelCountdown = null;
       setStatus('configurando');
+      update({ autoCam: false });
       resolve(false);
     };
   });

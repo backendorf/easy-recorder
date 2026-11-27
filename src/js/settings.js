@@ -10,6 +10,8 @@ const SAVED = [
 export function loadSettings() {
   try {
     const data = JSON.parse(localStorage.getItem(KEY) || '{}');
+    // "Trocar sozinho" passou a vir ligado: ignora o valor salvo antes dessa mudança (sem autoV).
+    if (data.autoV !== 2) delete data.autoSwitch;
     return Object.fromEntries(SAVED.filter((k) => k in data).map((k) => [k, data[k]]));
   } catch {
     return {};
@@ -21,7 +23,7 @@ let lastJson = '';
 export function saveSettings(state) {
   clearTimeout(timer);
   timer = setTimeout(() => {
-    const json = JSON.stringify(Object.fromEntries(SAVED.map((k) => [k, state[k]])));
+    const json = JSON.stringify({ ...Object.fromEntries(SAVED.map((k) => [k, state[k]])), autoV: 2 });
     if (json === lastJson) return;
     lastJson = json;
     try {
