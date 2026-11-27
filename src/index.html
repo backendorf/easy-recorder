@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Easy Recorder</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .icon-btn { @apply grid size-10 place-items-center rounded-full text-zinc-400 transition outline-none hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 aria-pressed:bg-white aria-pressed:text-zinc-900 disabled:pointer-events-none disabled:opacity-30; }
+    .icon-btn svg { @apply size-[18px]; }
+    .sep { @apply mx-1 h-6 w-px bg-white/10; }
+    .pill { @apply inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-white/60; }
+    .label { @apply mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500; }
+    .seg { @apply flex rounded-full bg-white/5 p-0.5; }
+    .seg > button { @apply flex-1 rounded-full px-3 py-1 text-xs text-zinc-400 transition outline-none hover:text-white focus-visible:ring-2 focus-visible:ring-white/60 aria-pressed:bg-white aria-pressed:text-zinc-900; }
+    .select { @apply h-8 w-full appearance-none rounded-lg bg-white/5 px-2.5 text-xs text-zinc-200 outline-none focus-visible:ring-2 focus-visible:ring-white/60; }
+    .swatch { @apply size-6 rounded-full ring-offset-2 ring-offset-zinc-900 outline-none aria-pressed:ring-2 aria-pressed:ring-white focus-visible:ring-2 focus-visible:ring-white/60; }
+    [popover] { @apply m-0 border-0 bg-transparent p-0 text-zinc-100; }
+  </style>
+  <style>
+    /* Transições sutis da interface */
+    @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } }
+    @keyframes pop { from { opacity: 0; transform: scale(1.35); } }
+    #dock > :not([hidden]),
+    #settings section:not([hidden]),
+    #settings section > div:not([hidden]),
+    #hl-panel:not([hidden]),
+    #empty:not([hidden]),
+    #result:not([hidden]),
+    #banner:not([hidden]),
+    #toasts > * { animation: fade-in .22s cubic-bezier(.2,.8,.2,1); }
+    #countdown:not([hidden]) { animation: fade-in .2s ease-out; }
+    #countdown-num.pop { animation: pop .45s cubic-bezier(.2,.8,.2,1); }
+    #dock { transition: width .25s ease; }
+    #settings {
+      opacity: 0; transform: translateY(8px) scale(.98);
+      transition: opacity .18s ease, transform .18s ease, overlay .18s allow-discrete, display .18s allow-discrete;
+    }
+    #settings:popover-open { opacity: 1; transform: none; }
+    @starting-style { #settings:popover-open { opacity: 0; transform: translateY(8px) scale(.98); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body class="h-full bg-zinc-950 font-sans text-zinc-100 antialiased">
+  <!-- Marca discreta -->
+  <div class="fixed left-6 top-5 flex items-center gap-2 text-sm font-medium tracking-tight text-zinc-400 select-none">
+    <span class="size-2 rounded-full bg-rose-500"></span> Easy Recorder
+  </div>
+
+  <div class="flex min-h-full flex-col items-center justify-center gap-6 px-6 py-10">
+
+    <!-- Aviso (sem suporte, contexto inseguro etc.) -->
+    <p id="banner" hidden class="w-full max-w-5xl rounded-xl bg-amber-400/10 px-4 py-2.5 text-center text-sm text-amber-200"></p>
+
+    <!-- Preview -->
+    <div class="relative aspect-video w-full max-w-5xl overflow-hidden rounded-2xl bg-zinc-900 ring-1 ring-white/5 transition-[aspect-ratio] duration-300">
+      <canvas id="preview" width="1920" height="1080" class="block h-full w-full object-contain"></canvas>
+
+      <div id="empty" class="absolute inset-0 grid place-items-center">
+        <button id="btn-share" class="pill bg-white/10 text-zinc-200 hover:bg-white/15">
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          Compartilhar tela
+        </button>
+      </div>
+
+      <div id="auto-badge" hidden class="absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs text-zinc-200 backdrop-blur">Só câmera nesta aba · sai da aba para mostrar a tela</div>
+
+      <video id="result" hidden controls playsinline class="absolute inset-0 h-full w-full bg-black"></video>
+
+      <div id="countdown" hidden class="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-sm">
+        <span id="countdown-num" class="text-8xl font-light tabular-nums">3</span>
+      </div>
+    </div>
+
+    <!-- Dock de controles -->
+    <div id="dock" class="flex items-center gap-1 rounded-full bg-zinc-900 p-1.5 ring-1 ring-white/10 shadow-2xl shadow-black/50">
+
+      <!-- Layouts -->
+      <div id="layouts" role="group" aria-label="Layout" class="flex items-center gap-0.5">
+        <button class="icon-btn" data-layout="screen" aria-pressed="false" title="Só tela" aria-label="Só tela">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="bubble" aria-pressed="true" title="Tela + câmera" aria-label="Tela e câmera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="16" cy="14" r="2.5" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="cam" aria-pressed="false" title="Só câmera" aria-label="Só câmera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="9" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>
+        </button>
+        <button class="icon-btn" data-layout="split" aria-pressed="false" title="Lado a lado" aria-label="Lado a lado">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="11" height="14" rx="2"/><rect x="16" y="5" width="5" height="14" rx="1.5"/></svg>
+        </button>
+      </div>
+
+      <!-- Compartilhar / parar de compartilhar durante a gravação -->
+      <button id="btn-screen" hidden class="icon-btn text-zinc-200" title="Parar de compartilhar" aria-label="Parar de compartilhar a tela">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><path id="screen-slash" class="hidden" d="M4 3l16 18"/></svg>
+      </button>
+
+      <span id="sep-layouts" class="sep"></span>
+
+      <!-- Microfone com medidor de nível -->
+      <button id="btn-mic" class="icon-btn text-zinc-200" title="Microfone" aria-label="Desligar microfone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path id="mic-slash" class="hidden" d="M4 4l16 16"/></svg>
+      </button>
+      <div class="h-6 w-1.5 overflow-hidden rounded-full bg-white/10" role="meter" aria-label="Nível do microfone" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" title="Nível do microfone">
+        <div class="flex h-full flex-col justify-end"><div id="meter" class="h-[0%] w-full rounded-full bg-emerald-400 transition-[height] duration-75"></div></div>
+      </div>
+
+      <span id="sep-settings" class="sep"></span>
+
+      <!-- Configurações -->
+      <button id="btn-settings" class="icon-btn" popovertarget="settings" title="Ajustes" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+
+      <!-- Gravar / Pausar / Parar -->
+      <button id="btn-pip" hidden class="icon-btn" title="Abrir controles flutuantes (ficam por cima de tudo)" aria-label="Abrir controles flutuantes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="5" rx="1" fill="currentColor"/></svg>
+      </button>
+      <span id="timer" hidden class="px-2 font-mono text-sm tabular-nums text-zinc-300">00:00</span>
+      <button id="btn-pause" hidden class="icon-btn" title="Pausar" aria-label="Pausar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      </button>
+      <button id="btn-resume" hidden class="icon-btn" title="Retomar" aria-label="Retomar">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>
+      </button>
+      <button id="btn-cancel" hidden class="pill text-zinc-300 hover:bg-white/10">Cancelar</button>
+      <button id="btn-record" class="pill ml-1 bg-rose-500 text-white hover:bg-rose-400">
+        <span class="size-2.5 rounded-full bg-white"></span> Gravar
+      </button>
+      <button id="btn-stop" hidden class="pill ml-1 bg-rose-500 text-white hover:bg-rose-400">
+        <span class="size-2.5 rounded-[3px] bg-white"></span> Parar
+      </button>
+      <!-- Saídas: cada uma com preview (▶) e download (↓) -->
+      <div id="outputs" hidden class="flex flex-wrap items-center gap-1.5"></div>
+      <button id="btn-new" hidden class="pill text-zinc-300 hover:bg-white/10">Nova gravação</button>
+    </div>
+
+    <!-- Highlights (tela final) -->
+    <div id="hl-panel" hidden class="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-2xl bg-zinc-900 px-3 py-2 text-xs text-zinc-400 ring-1 ring-white/10">
+      <span class="flex items-center gap-1.5 font-medium text-zinc-200">
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12h2l2-6 4 12 3-9 2 3h5"/></svg> Highlights
+      </span>
+      <div role="group" aria-label="Formato dos highlights" class="seg">
+        <button data-hl-format="desktop" aria-pressed="true">Desktop</button>
+        <button data-hl-format="mobile" aria-pressed="false">Celular</button>
+      </div>
+      <span class="flex items-center gap-1.5">
+        <input id="hl-pre" type="number" min="1" max="10" step="1" value="3" aria-label="Segundos antes do pico" class="h-7 w-9 rounded-md bg-white/5 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none text-xs text-zinc-100 tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-white/60"> s antes
+        <input id="hl-post" type="number" min="1" max="10" step="1" value="4" aria-label="Segundos depois do pico" class="h-7 w-9 rounded-md bg-white/5 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none text-xs text-zinc-100 tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-white/60"> s depois
+      </span>
+      <div role="group" aria-label="Sensibilidade dos picos" class="seg">
+        <button data-hl-sens="low" aria-pressed="false">Baixa</button>
+        <button data-hl-sens="medium" aria-pressed="true">Média</button>
+        <button data-hl-sens="high" aria-pressed="false">Alta</button>
+      </div>
+      <button id="btn-highlights" class="pill !h-8 !px-4 bg-white text-zinc-900 hover:bg-zinc-200 disabled:opacity-70">
+        <span id="hl-label" class="tabular-nums">Gerar</span>
+      </button>
+    </div>
+
+    <p class="flex items-center gap-1.5 text-xs text-zinc-600">
+      <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Nada sai do seu navegador
+    </p>
+  </div>
+
+  <!-- Ajustes (recolhidos) -->
+  <div id="settings" popover class="w-72">
+    <div class="flex flex-col gap-5 rounded-2xl bg-zinc-900 p-4 ring-1 ring-white/10 shadow-2xl shadow-black/60">
+
+      <section id="cam-opts" class="flex flex-col gap-2">
+        <p class="label !mb-0">Câmera</p>
+        <div id="bubble-opts" class="flex flex-col gap-2">
+        <div class="flex items-center gap-2">
+          <div id="corners" role="group" aria-label="Canto" class="seg">
+            <button data-corner="tl" aria-pressed="false" aria-label="Superior esquerdo">↖</button>
+            <button data-corner="tr" aria-pressed="false" aria-label="Superior direito">↗</button>
+            <button data-corner="bl" aria-pressed="false" aria-label="Inferior esquerdo">↙</button>
+            <button data-corner="br" aria-pressed="true" aria-label="Inferior direito">↘</button>
+          </div>
+          <div id="sizes" role="group" aria-label="Tamanho" class="seg flex-1">
+            <button data-size="sm" aria-pressed="false">P</button>
+            <button data-size="md" aria-pressed="true">M</button>
+            <button data-size="lg" aria-pressed="false">G</button>
+          </div>
+        </div>
+        <div id="shapes" role="group" aria-label="Formato" class="seg">
+          <button data-shape="circle" aria-pressed="true">Redondo</button>
+          <button data-shape="square" aria-pressed="false">Quadrado</button>
+        </div>
+        </div>
+        <div id="split-opts" class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between text-xs text-zinc-400">
+            <span>Proporção</span><span id="split-label" class="tabular-nums">Tela 70% · Câmera 30%</span>
+          </div>
+          <input id="split-ratio" type="range" min="50" max="80" step="1" value="70" aria-label="Proporção entre tela e câmera" class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow">
+        </div>
+        <div id="borders" role="group" aria-label="Borda" class="seg">
+          <button data-border="none" aria-pressed="false">Sem borda</button>
+          <button data-border="thin" aria-pressed="true">Fina</button>
+          <button data-border="thick" aria-pressed="false">Grossa</button>
+        </div>
+        <label class="mt-1 flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Zoom suave em loop
+          <input id="cam-zoom" type="checkbox" class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+        <div id="zoom-opts" hidden class="flex flex-col gap-2">
+          <div class="flex items-center gap-3">
+            <input id="zoom-amount" type="range" min="5" max="30" step="1" value="15" aria-label="Intensidade do zoom" class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-white [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow">
+            <span id="zoom-label" class="w-8 text-right text-xs tabular-nums text-zinc-400">15%</span>
+          </div>
+          <div role="group" aria-label="Velocidade do zoom" class="seg">
+            <button data-zoom-speed="slow" aria-pressed="false">Lento</button>
+            <button data-zoom-speed="normal" aria-pressed="true">Normal</button>
+            <button data-zoom-speed="fast" aria-pressed="false">Rápido</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <p class="label">Fundo</p>
+        <div id="bg-swatches" role="group" aria-label="Fundo" class="flex items-center gap-2">
+          <button data-bg="none" aria-pressed="false" class="swatch grid place-items-center bg-zinc-800 text-zinc-500" title="Sem fundo" aria-label="Sem fundo">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 19 19 5"/></svg>
+          </button>
+          <button data-color="#6d5dfc" aria-pressed="true" class="swatch bg-[#6d5dfc]" aria-label="Violeta"></button>
+          <button data-color="#0ea5e9" aria-pressed="false" class="swatch bg-[#0ea5e9]" aria-label="Azul"></button>
+          <button data-color="#10b981" aria-pressed="false" class="swatch bg-[#10b981]" aria-label="Verde"></button>
+          <button data-color="#f43f5e" aria-pressed="false" class="swatch bg-[#f43f5e]" aria-label="Rosa"></button>
+          <label class="swatch relative grid cursor-pointer place-items-center bg-[conic-gradient(red,yellow,lime,cyan,blue,magenta,red)]" title="Outra cor">
+            <input id="bg-color" type="color" value="#6d5dfc" class="absolute inset-0 cursor-pointer opacity-0" aria-label="Outra cor">
+          </label>
+          <label class="swatch relative ml-auto grid cursor-pointer place-items-center bg-zinc-800 text-zinc-400 hover:text-white" title="Imagem ou vídeo">
+            <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            <input id="bg-file" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm" class="sr-only" aria-label="Imagem ou vídeo de fundo">
+          </label>
+        </div>
+        <p id="bg-file-name" hidden class="mt-2 truncate text-xs text-zinc-500"></p>
+      </section>
+
+      <section class="flex flex-col gap-2">
+        <p class="label">Dispositivos</p>
+        <button id="btn-reshare" class="flex h-8 items-center justify-between rounded-lg bg-white/5 px-2.5 text-xs text-zinc-200 hover:bg-white/10"><span id="screen-status">Tela não compartilhada</span><span class="text-zinc-500">Trocar</span></button>
+        <select id="cam-select" class="select" aria-label="Câmera"><option>Câmera padrão</option></select>
+        <select id="mic-select" class="select" aria-label="Microfone"><option>Microfone padrão</option></select>
+        <label class="mt-1 flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Áudio da aba
+          <input id="tab-audio" type="checkbox" class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+        <label class="flex cursor-pointer items-center justify-between gap-3 text-xs text-zinc-300" title="Gravando: nesta aba aparece só a câmera; ao ir para outra aba ou app, entra a tela">
+          <span>Trocar sozinho<span class="block text-[11px] text-zinc-500">Câmera aqui, tela quando você sair da aba</span></span>
+          <input id="auto-switch" type="checkbox" class="peer sr-only">
+          <span class="relative h-4 w-7 shrink-0 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+        <label class="flex cursor-pointer items-center justify-between text-xs text-zinc-300">
+          Gerar versão para celular (9:16)
+          <input id="vertical" type="checkbox" checked class="peer sr-only">
+          <span class="relative h-4 w-7 rounded-full bg-white/10 transition peer-checked:bg-rose-500 after:absolute after:left-0.5 after:top-0.5 after:size-3 after:rounded-full after:bg-white after:transition peer-checked:after:translate-x-3 peer-focus-visible:ring-2 peer-focus-visible:ring-white/60"></span>
+        </label>
+      </section>
+    </div>
+  </div>
+
+  <div id="toasts" aria-live="polite" class="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 flex-col gap-2"></div>
+
+  <!-- Fontes de vídeo ocultas usadas pelo canvas -->
+  <div id="hidden-sources" class="pointer-events-none fixed left-0 top-0 size-px overflow-hidden opacity-0" aria-hidden="true">
+    <video id="v-screen" muted playsinline></video>
+    <video id="v-cam" muted playsinline></video>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
