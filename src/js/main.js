@@ -7,7 +7,7 @@ import { Background } from './background.js';
 import { Recorder, fileName, formatTime, supportsMp4 } from './recorder.js';
 import * as ui from './ui.js';
 import { openPip, updatePip, closePip, pipWindow } from './pip.js';
-import { findHighlights, renderHighlights, ticker } from './highlights.js';
+import { findHighlights, renderHighlights, ticker, mergeVideos } from './highlights.js';
 import { loadSettings, saveSettings, saveBackgroundFile, loadBackgroundFile } from './settings.js';
 
 const { $ } = ui;
@@ -401,9 +401,10 @@ function newRecording() {
   if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
   if (state.blobUrlV) URL.revokeObjectURL(state.blobUrlV);
   revokeHighlights();
+  revokeMerged();
   lastBlob = null;
   lastBlobV = null;
-  update({ blobUrl: null, fileName: '', blobUrlV: null, fileNameV: '', hlStatus: 'idle', hlProgress: 0, preview: 'main' });
+  update({ blobUrl: null, fileName: '', blobUrlV: null, fileNameV: '', hlStatus: 'idle', hlProgress: 0, preview: 'main', mergeOrder: [], merged: null, mergeStatus: 'idle' });
   ui.setTimer('00:00');
   setStatus('configurando');
   acquireCamAndMic();
@@ -437,6 +438,32 @@ async function makeHighlights() {
   }
 }
 
+// ---------- Juntar vídeos ----------
+// Marca as saídas na ordem e gera um MP4 só, tocando uma depois da outra.
+function revokeMerged() {
+  if (state.merged) URL.revokeObjectURL(state.merged.url);
+}
+async function mergeOutputs() {
+  if (state.mergeStatus === 'working') return;
+  const urls = {
+    main: state.blobUrl, vertical: state.blobUrlV, 'hl-desktop': state.hl.desktop?.url, 'hl-mobile': state.hl.mobile?.url,
+  };
+  const list = state.mergeOrder.map((k) => urls[k]).filter(Boolean);
+  if (list.length < 2) return;
+  update({ mergeStatus: 'working', mergeProgress: 0 });
+  try {
+    const blob = await mergeVideos(list, (p) => update({ mergeProgress: p }));
+    revokeMerged();
+    const merged = { url: URL.createObjectURL(blob), name: state.fileName.replace('.mp4', '-juntado.mp4') };
+    update({ mergeStatus: 'idle', merged, preview: 'merged' });
+  } catch (e) {
+    console.error(e);
+    update({ mergeStatus: 'idle' });
+    ui.toast('Não foi possível juntar os vídeos.');
+  }
+}
+$('btn-merge').addEventListener('click', mergeOutputs);
+
 // RF14: aviso antes de fechar com vídeo não baixado (ou gravação em andamento).
 window.addEventListener('beforeunload', (e) => {
   const unsaved = (state.status === 'finalizado' && !downloaded) || state.status === 'gravando' || state.status === 'pausado';
@@ -460,6 +487,12 @@ $('btn-stop').addEventListener('click', stopRecording);
 $('outputs').addEventListener('click', (e) => {
   const play = e.target.closest('[data-preview]');
   if (play) update({ preview: play.dataset.preview });
+  const pick = e.target.closest('[data-pick]');
+  if (pick && state.mergeStatus !== 'working') {
+    const k = pick.dataset.pick;
+    const order = state.mergeOrder.includes(k) ? state.mergeOrder.filter((x) => x !== k) : [...state.mergeOrder, k];
+    update({ mergeOrder: order });
+  }
   if (e.target.closest('[data-download]')) downloaded = true;
 });
 $('vertical').addEventListener('change', (e) => update({ vertical: e.target.checked }));
@@ -480,7 +513,7 @@ function setHlOption(patch) {
   if ('hlFormat' in patch) return update(patch);
   revokeHighlights();
   const preview = state.preview.startsWith('hl-') ? 'main' : state.preview;
-  update({ ...patch, hlStatus: 'idle', hl: { desktop: null, mobile: null }, preview });
+  update({ ...patch, hlStatus: 'idle', hl: { desktop: null, mobile: null }, preview, mergeOrder: state.mergeOrder.filter((k) => !k.startsWith('hl-')) });
 }
 document.querySelectorAll('[data-hl-sens]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlSens: b.dataset.hlSens })));
 document.querySelectorAll('[data-hl-format]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlFormat: b.dataset.hlFormat })));

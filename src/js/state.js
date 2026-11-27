@@ -37,6 +37,10 @@ export const state = {
   hlFormat: 'desktop', // desktop | mobile // sensibilidade: low | medium | high
   hlStatus: 'idle', // idle | working | ready | none
   hlProgress: 0,
+  mergeOrder: [], // chaves das saídas marcadas para juntar, na ordem do clique
+  merged: null, // { url, name } do vídeo juntado
+  mergeStatus: 'idle', // idle | working
+  mergeProgress: 0,
   hl: { desktop: null, mobile: null }, // { url, name } de cada highlight gerado
   preview: 'main', // main | vertical | hl-desktop | hl-mobile
 };

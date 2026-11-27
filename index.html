@@ -28,6 +28,7 @@
     #settings section:not([hidden]),
     #settings section > div:not([hidden]),
     #hl-panel:not([hidden]),
+    #merge-panel:not([hidden]),
     #empty:not([hidden]),
     #result:not([hidden]),
     #banner:not([hidden]),
@@ -160,6 +161,13 @@
       <button id="btn-highlights" class="pill !h-8 !px-4 bg-white text-zinc-900 hover:bg-zinc-200 disabled:opacity-70">
         <span id="hl-label" class="tabular-nums">Gerar</span>
       </button>
+    </div>
+    <div id="merge-panel" hidden class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 rounded-2xl bg-zinc-900 px-3 py-2 text-xs text-zinc-400 ring-1 ring-white/10">
+      <span class="flex items-center gap-1.5 font-medium text-zinc-200">
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h7v12H4zM13 6h7v12h-7z"/></svg> Juntar vídeos
+      </span>
+      <span>Marque a bolinha de cada vídeo na ordem que quer juntar</span>
+      <button id="btn-merge" class="h-8 rounded-full bg-white px-3.5 font-medium text-zinc-900 transition hover:bg-zinc-200 disabled:opacity-40"><span id="merge-label">Juntar</span></button>
     </div>
 
     <p class="flex items-center gap-1.5 text-xs text-zinc-600">
@@ -316,6 +324,10 @@ const state = {
   hlFormat: 'desktop', // desktop | mobile // sensibilidade: low | medium | high
   hlStatus: 'idle', // idle | working | ready | none
   hlProgress: 0,
+  mergeOrder: [], // chaves das saídas marcadas para juntar, na ordem do clique
+  merged: null, // { url, name } do vídeo juntado
+  mergeStatus: 'idle', // idle | working
+  mergeProgress: 0,
   hl: { desktop: null, mobile: null }, // { url, name } de cada highlight gerado
   preview: 'main', // main | vertical | hl-desktop | hl-mobile
 };
@@ -547,8 +559,13 @@ function computeLayout(
     case 'screen':
       return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
 
-    case 'cam':
-      return { screen: null, cam: round({ ...area, radius, shape: 'rect' }) };
+    case 'cam': {
+      // Sempre um card com margem e cantos arredondados (como no lado a lado), nunca a tela inteira:
+      // assim o fundo e a borda continuam aparecendo em volta da câmera.
+      const m = 24 * u;
+      const a = framed ? area : { x: m, y: m, w: W - 2 * m, h: H - 2 * m };
+      return { screen: null, cam: round({ ...a, radius: Math.max(radius, 12 * u), shape: 'rect' }) };
+    }
 
     case 'bubble': {
       // A bolha se alinha aos cantos da própria tela, não do vídeo.
@@ -601,10 +618,10 @@ function computeVerticalLayout(id, { width: W, height: H, shape = 'circle', scre
     case 'screen':
       return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
 
-    case 'cam': {
-      const h = Math.min(area.h, camMax);
-      return { screen: null, cam: round({ x: area.x, y: area.y + (area.h - h) / 2, w: area.w, h, radius, shape: 'rect' }) };
-    }
+    case 'cam':
+      // Só a câmera: ocupa o quadro todo, com a margem que deixa o fundo e a borda aparecendo.
+      // (O limite de 40% vale quando a câmera divide o quadro com a tela.)
+      return { screen: null, cam: round({ ...area, radius, shape: 'rect' }) };
 
     case 'bubble': {
       // Bolha grande, centralizada abaixo da tela.
@@ -1240,7 +1257,72 @@ async function renderHighlights(blob, clips, onProgress = () => {}) {
   }
 }
 
-return { ticker, findHighlights, renderHighlights };
+/** Junta vários vídeos (urls) em um MP4, na ordem dada. Toca cada um escondido e grava. onProgress 0..1. */
+async function mergeVideos(urls, onProgress = () => {}) {
+  const box = document.getElementById('hidden-sources');
+  const vids = [];
+  for (const url of urls) {
+    const v = Object.assign(document.createElement('video'), { src: url, playsInline: true, preload: 'auto' });
+    box.append(v);
+    await once(v, 'loadedmetadata');
+    if (!Number.isFinite(v.duration)) {
+      v.currentTime = 1e9;
+      await once(v, 'seeked');
+      v.currentTime = 0;
+      await once(v, 'seeked');
+    }
+    vids.push(v);
+  }
+  // O vídeo final tem o tamanho do primeiro; os outros entram centralizados, sem cortar.
+  const W = vids[0].videoWidth;
+  const H = vids[0].videoHeight;
+  const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = canvas.getContext('2d');
+  const actx = audioContext();
+  const dest = actx.createMediaStreamDestination();
+  const srcs = vids.map((v) => actx.createMediaElementSource(v));
+  const out = canvas.captureStream(30);
+  out.addTrack(dest.stream.getAudioTracks()[0]);
+  const rec = new Recorder(out, { width: W, height: H });
+
+  const total = vids.reduce((a, v) => a + (Number.isFinite(v.duration) ? v.duration : 0), 0) || 1;
+  let cur = null;
+  let done = 0;
+  const draw = () => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    if (cur) {
+      const k = Math.min(W / cur.videoWidth, H / cur.videoHeight);
+      const w = cur.videoWidth * k;
+      const h = cur.videoHeight * k;
+      ctx.drawImage(cur, (W - w) / 2, (H - h) / 2, w, h);
+      onProgress(Math.min(1, (done + cur.currentTime) / total));
+    }
+  };
+  const stopTick = ticker(30, draw);
+  try {
+    for (const [i, v] of vids.entries()) {
+      srcs[i].connect(dest);
+      cur = v;
+      draw();
+      if (i === 0) rec.start();
+      else rec.resume();
+      const ended = once(v, 'ended');
+      await v.play();
+      await ended;
+      rec.pause();
+      srcs[i].disconnect();
+      done += Number.isFinite(v.duration) ? v.duration : 0;
+    }
+    return await rec.stop();
+  } finally {
+    stopTick();
+    out.getTracks().forEach((t) => t.stop());
+    vids.forEach((v) => v.remove());
+  }
+}
+
+return { ticker, findHighlights, renderHighlights, mergeVideos };
 })();
 
 const mod_pip = (() => {
@@ -1454,6 +1536,13 @@ function render(s) {
   if (!hasV) press(document.querySelector('[data-hl-format=desktop]'), true);
   for (const b of document.querySelectorAll('[data-hl-sens], #hl-pre, #hl-post')) b.disabled = s.hlStatus === 'working';
   $('btn-highlights').disabled = s.hlStatus === 'working';
+  // Juntar vídeos: aparece no fim quando há mais de um vídeo.
+  const outs = fin ? outputsOf(s) : [];
+  const picked = s.mergeOrder.filter((k) => outs.some((o) => o.key === k));
+  show($('merge-panel'), outs.filter((o) => o.key !== 'merged').length > 1);
+  $('btn-merge').disabled = s.mergeStatus === 'working' || picked.length < 2;
+  $('merge-label').textContent =
+    s.mergeStatus === 'working' ? `Juntando ${Math.round(s.mergeProgress * 100)}%` : picked.length >= 2 ? `Juntar ${picked.length}` : 'Juntar';
   $('hl-label').textContent =
     s.hlStatus === 'working' ? `Gerando ${Math.round(s.hlProgress * 100)}%` : 'Gerar';
   $('timer').classList.toggle('text-amber-300', st === 'pausado');
@@ -1528,6 +1617,7 @@ function outputsOf(s) {
     s.blobUrlV && { key: 'vertical', label: 'Celular', url: s.blobUrlV, name: s.fileNameV },
     s.hl.desktop && { key: 'hl-desktop', label: 'Highlights', url: s.hl.desktop.url, name: s.hl.desktop.name },
     s.hl.mobile && { key: 'hl-mobile', label: 'Highlights celular', url: s.hl.mobile.url, name: s.hl.mobile.name },
+    s.merged && { key: 'merged', label: 'Juntado', url: s.merged.url, name: s.merged.name },
   ].filter(Boolean);
 }
 
@@ -1537,7 +1627,9 @@ const DOWN = '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="curren
 function renderOutputs(s) {
   const list = outputsOf(s);
   const active = list.some((o) => o.key === s.preview) ? s.preview : list[0]?.key;
-  const key = JSON.stringify([list.map((o) => o.url), active]);
+  const order = s.mergeOrder;
+  const picking = list.length > 1;
+  const key = JSON.stringify([list.map((o) => o.url), active, order, picking]);
   const box = $('outputs');
   if (box.dataset.key === key) return;
   box.dataset.key = key;
@@ -1546,7 +1638,12 @@ function renderOutputs(s) {
       const on = o.key === active;
       const el = document.createElement('div');
       el.className = `flex h-10 items-center rounded-full transition ${on ? 'bg-white text-zinc-900' : 'bg-white/10 text-zinc-100'}`;
-      el.innerHTML = `
+      const n = order.indexOf(o.key) + 1;
+      // Bolinha para marcar a ordem do "Juntar" (1, 2, 3... na ordem do clique).
+      const pick = picking && o.key !== 'merged'
+        ? `<button data-pick="${o.key}" aria-pressed="${n > 0}" title="${n ? 'Tirar da junção' : 'Marcar para juntar'}" class="ml-1.5 grid size-6 place-items-center rounded-full text-[11px] font-semibold ring-1 ${n ? 'bg-emerald-400 text-zinc-900 ring-emerald-400' : on ? 'ring-zinc-900/30' : 'ring-white/30'} outline-none focus-visible:ring-2">${n || ''}</button>`
+        : '';
+      el.innerHTML = `${pick}
         <button data-preview="${o.key}" aria-pressed="${on}" title="Ver no player" class="flex h-full items-center gap-1.5 rounded-l-full pl-3.5 pr-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-white/60">${PLAY}${o.label}</button>
         <span class="h-5 w-px ${on ? 'bg-zinc-900/15' : 'bg-white/10'}"></span>
         <a data-download href="${o.url}" download="${o.name}" title="Baixar ${o.label}" aria-label="Baixar ${o.label}" class="grid h-full place-items-center rounded-r-full pl-2 pr-3 outline-none ${on ? 'hover:bg-zinc-900/5' : 'hover:bg-white/10'} focus-visible:ring-2 focus-visible:ring-white/60">${DOWN}</a>`;
@@ -1636,7 +1733,7 @@ const { Background } = mod_background;
 const { Recorder, fileName, formatTime, supportsMp4 } = mod_recorder;
 const ui = mod_ui;
 const { openPip, updatePip, closePip, pipWindow } = mod_pip;
-const { findHighlights, renderHighlights, ticker } = mod_highlights;
+const { findHighlights, renderHighlights, ticker, mergeVideos } = mod_highlights;
 const { loadSettings, saveSettings, saveBackgroundFile, loadBackgroundFile } = mod_settings;
 
 const { $ } = ui;
@@ -2030,9 +2127,10 @@ function newRecording() {
   if (state.blobUrl) URL.revokeObjectURL(state.blobUrl);
   if (state.blobUrlV) URL.revokeObjectURL(state.blobUrlV);
   revokeHighlights();
+  revokeMerged();
   lastBlob = null;
   lastBlobV = null;
-  update({ blobUrl: null, fileName: '', blobUrlV: null, fileNameV: '', hlStatus: 'idle', hlProgress: 0, preview: 'main' });
+  update({ blobUrl: null, fileName: '', blobUrlV: null, fileNameV: '', hlStatus: 'idle', hlProgress: 0, preview: 'main', mergeOrder: [], merged: null, mergeStatus: 'idle' });
   ui.setTimer('00:00');
   setStatus('configurando');
   acquireCamAndMic();
@@ -2066,6 +2164,32 @@ async function makeHighlights() {
   }
 }
 
+// ---------- Juntar vídeos ----------
+// Marca as saídas na ordem e gera um MP4 só, tocando uma depois da outra.
+function revokeMerged() {
+  if (state.merged) URL.revokeObjectURL(state.merged.url);
+}
+async function mergeOutputs() {
+  if (state.mergeStatus === 'working') return;
+  const urls = {
+    main: state.blobUrl, vertical: state.blobUrlV, 'hl-desktop': state.hl.desktop?.url, 'hl-mobile': state.hl.mobile?.url,
+  };
+  const list = state.mergeOrder.map((k) => urls[k]).filter(Boolean);
+  if (list.length < 2) return;
+  update({ mergeStatus: 'working', mergeProgress: 0 });
+  try {
+    const blob = await mergeVideos(list, (p) => update({ mergeProgress: p }));
+    revokeMerged();
+    const merged = { url: URL.createObjectURL(blob), name: state.fileName.replace('.mp4', '-juntado.mp4') };
+    update({ mergeStatus: 'idle', merged, preview: 'merged' });
+  } catch (e) {
+    console.error(e);
+    update({ mergeStatus: 'idle' });
+    ui.toast('Não foi possível juntar os vídeos.');
+  }
+}
+$('btn-merge').addEventListener('click', mergeOutputs);
+
 // RF14: aviso antes de fechar com vídeo não baixado (ou gravação em andamento).
 window.addEventListener('beforeunload', (e) => {
   const unsaved = (state.status === 'finalizado' && !downloaded) || state.status === 'gravando' || state.status === 'pausado';
@@ -2089,6 +2213,12 @@ $('btn-stop').addEventListener('click', stopRecording);
 $('outputs').addEventListener('click', (e) => {
   const play = e.target.closest('[data-preview]');
   if (play) update({ preview: play.dataset.preview });
+  const pick = e.target.closest('[data-pick]');
+  if (pick && state.mergeStatus !== 'working') {
+    const k = pick.dataset.pick;
+    const order = state.mergeOrder.includes(k) ? state.mergeOrder.filter((x) => x !== k) : [...state.mergeOrder, k];
+    update({ mergeOrder: order });
+  }
   if (e.target.closest('[data-download]')) downloaded = true;
 });
 $('vertical').addEventListener('change', (e) => update({ vertical: e.target.checked }));
@@ -2109,7 +2239,7 @@ function setHlOption(patch) {
   if ('hlFormat' in patch) return update(patch);
   revokeHighlights();
   const preview = state.preview.startsWith('hl-') ? 'main' : state.preview;
-  update({ ...patch, hlStatus: 'idle', hl: { desktop: null, mobile: null }, preview });
+  update({ ...patch, hlStatus: 'idle', hl: { desktop: null, mobile: null }, preview, mergeOrder: state.mergeOrder.filter((k) => !k.startsWith('hl-')) });
 }
 document.querySelectorAll('[data-hl-sens]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlSens: b.dataset.hlSens })));
 document.querySelectorAll('[data-hl-format]').forEach((b) => b.addEventListener('click', () => setHlOption({ hlFormat: b.dataset.hlFormat })));

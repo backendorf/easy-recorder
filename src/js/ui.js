@@ -45,6 +45,13 @@ export function render(s) {
   if (!hasV) press(document.querySelector('[data-hl-format=desktop]'), true);
   for (const b of document.querySelectorAll('[data-hl-sens], #hl-pre, #hl-post')) b.disabled = s.hlStatus === 'working';
   $('btn-highlights').disabled = s.hlStatus === 'working';
+  // Juntar vídeos: aparece no fim quando há mais de um vídeo.
+  const outs = fin ? outputsOf(s) : [];
+  const picked = s.mergeOrder.filter((k) => outs.some((o) => o.key === k));
+  show($('merge-panel'), outs.filter((o) => o.key !== 'merged').length > 1);
+  $('btn-merge').disabled = s.mergeStatus === 'working' || picked.length < 2;
+  $('merge-label').textContent =
+    s.mergeStatus === 'working' ? `Juntando ${Math.round(s.mergeProgress * 100)}%` : picked.length >= 2 ? `Juntar ${picked.length}` : 'Juntar';
   $('hl-label').textContent =
     s.hlStatus === 'working' ? `Gerando ${Math.round(s.hlProgress * 100)}%` : 'Gerar';
   $('timer').classList.toggle('text-amber-300', st === 'pausado');
@@ -119,6 +126,7 @@ function outputsOf(s) {
     s.blobUrlV && { key: 'vertical', label: 'Celular', url: s.blobUrlV, name: s.fileNameV },
     s.hl.desktop && { key: 'hl-desktop', label: 'Highlights', url: s.hl.desktop.url, name: s.hl.desktop.name },
     s.hl.mobile && { key: 'hl-mobile', label: 'Highlights celular', url: s.hl.mobile.url, name: s.hl.mobile.name },
+    s.merged && { key: 'merged', label: 'Juntado', url: s.merged.url, name: s.merged.name },
   ].filter(Boolean);
 }
 
@@ -128,7 +136,9 @@ const DOWN = '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="curren
 function renderOutputs(s) {
   const list = outputsOf(s);
   const active = list.some((o) => o.key === s.preview) ? s.preview : list[0]?.key;
-  const key = JSON.stringify([list.map((o) => o.url), active]);
+  const order = s.mergeOrder;
+  const picking = list.length > 1;
+  const key = JSON.stringify([list.map((o) => o.url), active, order, picking]);
   const box = $('outputs');
   if (box.dataset.key === key) return;
   box.dataset.key = key;
@@ -137,7 +147,12 @@ function renderOutputs(s) {
       const on = o.key === active;
       const el = document.createElement('div');
       el.className = `flex h-10 items-center rounded-full transition ${on ? 'bg-white text-zinc-900' : 'bg-white/10 text-zinc-100'}`;
-      el.innerHTML = `
+      const n = order.indexOf(o.key) + 1;
+      // Bolinha para marcar a ordem do "Juntar" (1, 2, 3... na ordem do clique).
+      const pick = picking && o.key !== 'merged'
+        ? `<button data-pick="${o.key}" aria-pressed="${n > 0}" title="${n ? 'Tirar da junção' : 'Marcar para juntar'}" class="ml-1.5 grid size-6 place-items-center rounded-full text-[11px] font-semibold ring-1 ${n ? 'bg-emerald-400 text-zinc-900 ring-emerald-400' : on ? 'ring-zinc-900/30' : 'ring-white/30'} outline-none focus-visible:ring-2">${n || ''}</button>`
+        : '';
+      el.innerHTML = `${pick}
         <button data-preview="${o.key}" aria-pressed="${on}" title="Ver no player" class="flex h-full items-center gap-1.5 rounded-l-full pl-3.5 pr-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-white/60">${PLAY}${o.label}</button>
         <span class="h-5 w-px ${on ? 'bg-zinc-900/15' : 'bg-white/10'}"></span>
         <a data-download href="${o.url}" download="${o.name}" title="Baixar ${o.label}" aria-label="Baixar ${o.label}" class="grid h-full place-items-center rounded-r-full pl-2 pr-3 outline-none ${on ? 'hover:bg-zinc-900/5' : 'hover:bg-white/10'} focus-visible:ring-2 focus-visible:ring-white/60">${DOWN}</a>`;

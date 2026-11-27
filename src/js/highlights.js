@@ -189,3 +189,68 @@ export async function renderHighlights(blob, clips, onProgress = () => {}) {
     URL.revokeObjectURL(url);
   }
 }
+
+/** Junta vários vídeos (urls) em um MP4, na ordem dada. Toca cada um escondido e grava. onProgress 0..1. */
+export async function mergeVideos(urls, onProgress = () => {}) {
+  const box = document.getElementById('hidden-sources');
+  const vids = [];
+  for (const url of urls) {
+    const v = Object.assign(document.createElement('video'), { src: url, playsInline: true, preload: 'auto' });
+    box.append(v);
+    await once(v, 'loadedmetadata');
+    if (!Number.isFinite(v.duration)) {
+      v.currentTime = 1e9;
+      await once(v, 'seeked');
+      v.currentTime = 0;
+      await once(v, 'seeked');
+    }
+    vids.push(v);
+  }
+  // O vídeo final tem o tamanho do primeiro; os outros entram centralizados, sem cortar.
+  const W = vids[0].videoWidth;
+  const H = vids[0].videoHeight;
+  const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = canvas.getContext('2d');
+  const actx = audioContext();
+  const dest = actx.createMediaStreamDestination();
+  const srcs = vids.map((v) => actx.createMediaElementSource(v));
+  const out = canvas.captureStream(30);
+  out.addTrack(dest.stream.getAudioTracks()[0]);
+  const rec = new Recorder(out, { width: W, height: H });
+
+  const total = vids.reduce((a, v) => a + (Number.isFinite(v.duration) ? v.duration : 0), 0) || 1;
+  let cur = null;
+  let done = 0;
+  const draw = () => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    if (cur) {
+      const k = Math.min(W / cur.videoWidth, H / cur.videoHeight);
+      const w = cur.videoWidth * k;
+      const h = cur.videoHeight * k;
+      ctx.drawImage(cur, (W - w) / 2, (H - h) / 2, w, h);
+      onProgress(Math.min(1, (done + cur.currentTime) / total));
+    }
+  };
+  const stopTick = ticker(30, draw);
+  try {
+    for (const [i, v] of vids.entries()) {
+      srcs[i].connect(dest);
+      cur = v;
+      draw();
+      if (i === 0) rec.start();
+      else rec.resume();
+      const ended = once(v, 'ended');
+      await v.play();
+      await ended;
+      rec.pause();
+      srcs[i].disconnect();
+      done += Number.isFinite(v.duration) ? v.duration : 0;
+    }
+    return await rec.stop();
+  } finally {
+    stopTick();
+    out.getTracks().forEach((t) => t.stop());
+    vids.forEach((v) => v.remove());
+  }
+}

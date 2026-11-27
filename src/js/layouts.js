@@ -31,8 +31,13 @@ export function computeLayout(
     case 'screen':
       return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
 
-    case 'cam':
-      return { screen: null, cam: round({ ...area, radius, shape: 'rect' }) };
+    case 'cam': {
+      // Sempre um card com margem e cantos arredondados (como no lado a lado), nunca a tela inteira:
+      // assim o fundo e a borda continuam aparecendo em volta da câmera.
+      const m = 24 * u;
+      const a = framed ? area : { x: m, y: m, w: W - 2 * m, h: H - 2 * m };
+      return { screen: null, cam: round({ ...a, radius: Math.max(radius, 12 * u), shape: 'rect' }) };
+    }
 
     case 'bubble': {
       // A bolha se alinha aos cantos da própria tela, não do vídeo.
@@ -85,10 +90,10 @@ export function computeVerticalLayout(id, { width: W, height: H, shape = 'circle
     case 'screen':
       return { screen: round({ ...fit(screenAspect, area), radius }), cam: null };
 
-    case 'cam': {
-      const h = Math.min(area.h, camMax);
-      return { screen: null, cam: round({ x: area.x, y: area.y + (area.h - h) / 2, w: area.w, h, radius, shape: 'rect' }) };
-    }
+    case 'cam':
+      // Só a câmera: ocupa o quadro todo, com a margem que deixa o fundo e a borda aparecendo.
+      // (O limite de 40% vale quando a câmera divide o quadro com a tela.)
+      return { screen: null, cam: round({ ...area, radius, shape: 'rect' }) };
 
     case 'bubble': {
       // Bolha grande, centralizada abaixo da tela.

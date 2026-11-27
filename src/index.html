@@ -28,6 +28,7 @@
     #settings section:not([hidden]),
     #settings section > div:not([hidden]),
     #hl-panel:not([hidden]),
+    #merge-panel:not([hidden]),
     #empty:not([hidden]),
     #result:not([hidden]),
     #banner:not([hidden]),
@@ -160,6 +161,13 @@
       <button id="btn-highlights" class="pill !h-8 !px-4 bg-white text-zinc-900 hover:bg-zinc-200 disabled:opacity-70">
         <span id="hl-label" class="tabular-nums">Gerar</span>
       </button>
+    </div>
+    <div id="merge-panel" hidden class="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 rounded-2xl bg-zinc-900 px-3 py-2 text-xs text-zinc-400 ring-1 ring-white/10">
+      <span class="flex items-center gap-1.5 font-medium text-zinc-200">
+        <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h7v12H4zM13 6h7v12h-7z"/></svg> Juntar vídeos
+      </span>
+      <span>Marque a bolinha de cada vídeo na ordem que quer juntar</span>
+      <button id="btn-merge" class="h-8 rounded-full bg-white px-3.5 font-medium text-zinc-900 transition hover:bg-zinc-200 disabled:opacity-40"><span id="merge-label">Juntar</span></button>
     </div>
 
     <p class="flex items-center gap-1.5 text-xs text-zinc-600">
